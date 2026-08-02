@@ -1,0 +1,15 @@
+# build artifacts
+*.zip
+dist/
+build/
+
+# dependencies (none needed, but just in case)
+node_modules/
+
+# os and editor cruft
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+*.swp

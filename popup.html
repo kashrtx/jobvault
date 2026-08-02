@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>JobVault</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="4.2" /><path d="M11 11l7 7" /><path d="M15.5 14.5l2 2" /><path d="M18 12l2 2" />
+        </svg>
+        <span class="wordmark">Job<span>Vault</span></span>
+      </div>
+      <button id="lockBtn" class="lockbtn" hidden title="Lock now">Lock</button>
+    </header>
+
+    <!-- create -->
+    <section id="view-onboard" class="view" hidden>
+      <div class="hero">
+        <div class="hero-key">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4.2"/><path d="M11 11l7 7"/><path d="M15.5 14.5l2 2"/><path d="M18 12l2 2"/></svg>
+        </div>
+        <h1>Set up JobVault</h1>
+        <p class="lead">Your logins are encrypted on this device. The master password is the one key that unlocks them, so pick something you will not forget. There is no reset.</p>
+      </div>
+      <label class="field"><span>Master password</span><input id="ob-pass" type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>
+      <label class="field"><span>Type it again</span><input id="ob-pass2" type="password" autocomplete="new-password" placeholder="Confirm" /></label>
+      <label class="field"><span>Email to use on job sites (optional)</span><input id="ob-email" type="email" autocomplete="email" placeholder="you@email.com" /></label>
+      <label class="field"><span>Quick unlock PIN, 4 to 12 digits (optional)</span><input id="ob-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Skip if you prefer the master password" /></label>
+      <p id="ob-msg" class="msg"></p>
+      <button id="ob-create" class="btn primary wide">Create my vault</button>
+    </section>
+
+    <!-- unlock -->
+    <section id="view-lock" class="view" hidden>
+      <div class="hero">
+        <div class="hero-key locked">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#8b97ac" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/><circle cx="12" cy="15" r="1.3"/></svg>
+        </div>
+        <h1>Welcome back</h1>
+        <p class="lead">Unlock to fill and save your job logins.</p>
+      </div>
+
+      <div id="lk-pin-block" hidden>
+        <label class="field"><span>Quick unlock PIN</span><input id="lk-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" placeholder="••••" /></label>
+        <p id="lk-msg-pin" class="msg"></p>
+        <button id="lk-pin-unlock" class="btn primary wide">Unlock</button>
+        <button id="lk-use-master" class="btn ghost wide">Use master password</button>
+      </div>
+
+      <div id="lk-master-block" hidden>
+        <label class="field"><span>Master password</span><input id="lk-pass" type="password" autocomplete="current-password" placeholder="Master password" /></label>
+        <p id="lk-msg" class="msg"></p>
+        <button id="lk-unlock" class="btn primary wide">Unlock</button>
+        <button id="lk-use-pin" class="btn ghost wide" hidden>Use PIN instead</button>
+      </div>
+    </section>
+
+    <!-- main -->
+    <section id="view-main" class="view" hidden>
+      <nav class="tabs">
+        <button class="tab active" data-tab="vault">Logins</button>
+        <button class="tab" data-tab="generate">Generate</button>
+        <button class="tab" data-tab="match">Resume</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+
+      <!-- LOGINS -->
+      <div class="panel active" data-panel="vault">
+        <div id="pending" class="pending" hidden>
+          <div class="pending-text"><strong>Save this login?</strong><span id="pending-detail" class="muted"></span></div>
+          <div class="pending-actions">
+            <button id="pending-save" class="btn primary sm">Save</button>
+            <button id="pending-dismiss" class="btn ghost sm">Not now</button>
+          </div>
+        </div>
+        <div class="searchrow">
+          <input id="search" type="search" placeholder="Search company or email" />
+          <button id="add-manual" class="btn ghost sm" title="Add a login by hand">Add</button>
+        </div>
+        <div id="entries" class="entries"></div>
+        <div id="empty" class="emptystate" hidden>
+          <p>No logins yet.</p>
+          <p class="muted">Sign in on a Workday or careers page and JobVault offers to remember it for that exact company.</p>
+        </div>
+      </div>
+
+      <!-- GENERATE -->
+      <div class="panel" data-panel="generate" hidden>
+        <div class="genbox">
+          <code id="gen-out" class="genpass">•••••••••••••••</code>
+          <div class="genbtns">
+            <button id="gen-refresh" class="iconbtn" title="Make a new one">↻</button>
+            <button id="gen-copy" class="iconbtn" title="Copy">Copy</button>
+          </div>
+        </div>
+        <div class="meter"><span id="gen-strength-bar"></span></div>
+        <div class="meterlabel"><span id="gen-strength">Strong</span></div>
+        <label class="slider"><span>Length <b id="gen-len-label">20</b></span><input id="gen-len" type="range" min="8" max="48" value="20" /></label>
+        <div class="toggles">
+          <label class="chk"><input type="checkbox" id="opt-upper" checked /> <span>A-Z</span></label>
+          <label class="chk"><input type="checkbox" id="opt-lower" checked /> <span>a-z</span></label>
+          <label class="chk"><input type="checkbox" id="opt-digits" checked /> <span>0-9</span></label>
+          <label class="chk"><input type="checkbox" id="opt-symbols" checked /> <span>!@#</span></label>
+        </div>
+        <p class="muted small">Ambiguous characters like l, I, O and 0 are left out so nothing gets mistyped.</p>
+      </div>
+
+      <!-- RESUME -->
+      <div class="panel" data-panel="match" hidden>
+        <p class="muted small">Paste your resume once. Then open a job post and JobVault shows how well you line up, right on the page.</p>
+        <textarea id="resume" class="textarea" placeholder="Paste your resume text here"></textarea>
+        <div class="row-between">
+          <label class="btn ghost sm filelabel">Upload .txt<input id="resume-file" type="file" accept=".txt,.md" hidden /></label>
+          <button id="resume-save" class="btn ghost sm">Save resume</button>
+        </div>
+        <div class="divider"><span>check a job</span></div>
+        <button id="scan-page" class="btn primary wide">Scan the job on this tab</button>
+        <details class="paste">
+          <summary>or paste a job description</summary>
+          <textarea id="jd" class="textarea short" placeholder="Paste the job description here"></textarea>
+          <button id="match-pasted" class="btn ghost sm">Match pasted text</button>
+        </details>
+        <div id="match-result" class="match" hidden>
+          <div class="scorewrap">
+            <svg class="ring" viewBox="0 0 120 120"><circle class="ring-bg" cx="60" cy="60" r="52" /><circle id="ring-fg" class="ring-fg" cx="60" cy="60" r="52" /></svg>
+            <div class="scoretext"><b id="score-num">0</b><span>match</span></div>
+          </div>
+          <div id="match-title" class="matchtitle"></div>
+          <div class="chipgroup"><h4>You already have</h4><div id="chips-have" class="chips"></div></div>
+          <div class="chipgroup"><h4>Worth adding if it is true for you</h4><div id="chips-missing" class="chips"></div></div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="panel" data-panel="settings" hidden>
+        <div class="field"><span>Preferred emails</span><div id="email-list" class="email-list"></div></div>
+        <div class="addrow">
+          <input id="email-add" type="email" placeholder="Add an email" />
+          <button id="email-add-btn" class="btn ghost sm">Add</button>
+        </div>
+
+        <div class="divider"><span>behaviour</span></div>
+        <label class="toggle-row"><span>Fill saved logins automatically</span><input id="set-autofill" type="checkbox" /></label>
+        <label class="toggle-row"><span>Show resume match on job pages</span><input id="set-matchopen" type="checkbox" /></label>
+        <label class="field"><span>Lock the vault after</span>
+          <select id="set-autolock">
+            <option value="0">Never</option><option value="5">5 minutes</option>
+            <option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option>
+          </select>
+        </label>
+        <button id="set-save" class="btn primary wide">Save settings</button>
+
+        <div class="divider"><span>quick unlock PIN</span></div>
+        <p id="pin-status" class="muted small"></p>
+        <div id="pin-setup" hidden>
+          <label class="field"><span>New PIN, 4 to 12 digits</span><input id="pin-new" type="password" inputmode="numeric" placeholder="PIN" /></label>
+          <label class="field"><span>Type it again</span><input id="pin-new2" type="password" inputmode="numeric" placeholder="Confirm PIN" /></label>
+          <div class="row-between"><button id="pin-cancel" class="btn ghost sm">Cancel</button><button id="pin-save" class="btn primary sm">Save PIN</button></div>
+        </div>
+        <div id="pin-buttons" class="row-between">
+          <button id="pin-setup-btn" class="btn ghost sm">Set up a PIN</button>
+          <button id="pin-remove-btn" class="btn ghost sm" hidden>Turn off PIN</button>
+        </div>
+
+        <div class="divider"><span>backup</span></div>
+        <div class="row-between">
+          <button id="export" class="btn ghost sm">Export encrypted backup</button>
+          <label class="btn ghost sm filelabel">Import backup<input id="import" type="file" accept=".json" hidden /></label>
+        </div>
+
+        <div class="divider"><span>master password</span></div>
+        <label class="field"><span>New master password</span><input id="cm-pass" type="password" autocomplete="new-password" placeholder="New master password" /></label>
+        <label class="field"><span>Type it again</span><input id="cm-pass2" type="password" autocomplete="new-password" placeholder="Confirm" /></label>
+        <button id="cm-change" class="btn ghost wide">Change master password</button>
+        <p id="set-msg" class="msg"></p>
+      </div>
+    </section>
+
+    <!-- edit dialog -->
+    <div id="modal" class="modal" hidden>
+      <div class="modal-card">
+        <h3 id="modal-title">Edit login</h3>
+        <label class="field"><span>Company</span><input id="md-company" type="text" /></label>
+        <label class="field"><span>Site</span><input id="md-host" type="text" placeholder="company.wd5.myworkdayjobs.com" /></label>
+        <label class="field"><span>Email or username</span><input id="md-email" type="text" list="email-options" /></label>
+        <label class="field"><span>Password</span><input id="md-password" type="text" /></label>
+        <label class="field"><span>Note</span><input id="md-note" type="text" placeholder="Optional" /></label>
+        <div class="row-between"><button id="md-cancel" class="btn ghost sm">Cancel</button><button id="md-save" class="btn primary sm">Save</button></div>
+      </div>
+    </div>
+    <datalist id="email-options"></datalist>
+
+    <div id="toast" class="apptoast" hidden></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

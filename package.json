@@ -1,0 +1,22 @@
+{
+  "name": "jobvault",
+  "version": "1.1.0",
+  "description": "A private, on-device password manager and resume matcher for Workday and other job application sites.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "node --check background.js && node --check content.js && node --check popup.js && node --check lib/crypto.js",
+    "package": "rm -f jobvault.zip && zip -rq jobvault.zip manifest.json background.js content.js popup.html popup.css popup.js lib icons README.md LICENSE"
+  },
+  "keywords": [
+    "browser-extension",
+    "chrome-extension",
+    "brave",
+    "password-manager",
+    "workday",
+    "job-search",
+    "manifest-v3",
+    "privacy"
+  ],
+  "license": "MIT"
+}
