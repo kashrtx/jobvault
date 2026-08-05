@@ -71,6 +71,24 @@ for f in manifest.json background.js content.js popup.html dashboard.html; do
   fi
 done
 
+# 5. Event handlers must not use a concise arrow body that can evaluate to false.
+#    `el.onkeydown = (e) => e.key === "Enter" && go()` returns false on every
+#    other key, and a DOM0 handler returning false cancels the keystroke, so the
+#    field silently refuses to accept typing. It is valid JavaScript, so nothing
+#    above catches it.
+if command -v grep >/dev/null 2>&1; then
+  # After the arrow, the first non-space character must be a brace. Without the
+  # [[:space:]] class the space itself satisfies [^{] and the check flags correct
+  # code as broken, which is how the first version of this rule failed.
+  hits=$(grep -rnE '\.on[a-z]+[[:space:]]*=[[:space:]]*\([^)]*\)[[:space:]]*=>[[:space:]]*[^{[:space:]].*(&&|\|\||===)' -- *.js 2>/dev/null || true)
+  if [ -n "$hits" ]; then
+    note "event handler with a concise arrow body that can return false:"
+    printf '%s\n' "$hits" | sed 's/^/    /'
+    note "wrap the body in braces so nothing is returned"
+    fail=1
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "verify: this tree is NOT safe to load"
   exit 1

@@ -6,7 +6,7 @@ import {
 import { computeMatch } from "./lib/match.js";
 import { normalizeProfile, emptyProfile, fillValues, completeness } from "./lib/profile.js";
 import { checkForUpdate, readBuild, DEFAULT_REPO, DEFAULT_BRANCH } from "./lib/update.js";
-import { ATS, atsName, originPattern, hostOf as siteHostOf } from "./lib/sites.js";
+import { ATS, atsName, originPattern, hostOf as siteHostOf, safeExternalUrl } from "./lib/sites.js";
 
 const K_META = "jv_meta";
 const K_VAULT = "jv_vault";
@@ -173,6 +173,33 @@ function emptyVault(defaultEmail = "") {
     updates: { ...DEFAULT_UPDATES },
     updatedAt: now(),
   };
+}
+
+/**
+ * Bounds and cleans anything a web page contributed to a job record.
+ *
+ * Everything here originates in a page's DOM, so length is whatever the page
+ * felt like emitting, and a URL is whatever string it contained. Text is stored
+ * per job and duplicated into all twelve snapshots, so an unbounded field is a
+ * storage problem as well as a correctness one.
+ */
+const CAPS = { title: 300, company: 200, location: 200, salary: 120, source: 200, notes: 5000, jdText: 60000, url: 2000 };
+
+function clampJob(job) {
+  const out = { ...job };
+  for (const [key, max] of Object.entries(CAPS)) {
+    if (typeof out[key] === "string" && out[key].length > max) out[key] = out[key].slice(0, max);
+  }
+  if (out.url !== undefined) out.url = safeExternalUrl(out.url);
+  for (const key of ["appliedAt", "deadline", "savedAt", "jdSavedAt", "followUpAt"]) {
+    const n = Number(out[key]);
+    out[key] = Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  if (out.matchScore != null) {
+    const n = Number(out.matchScore);
+    out.matchScore = Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null;
+  }
+  return out;
 }
 
 /** Brings any older vault shape up to v3 without losing a byte of it. */
@@ -1023,6 +1050,7 @@ async function handle(msg, sender) {
 
     // ---------------------------------------------------------------- jobs
     case "saveJob": {
+      msg = { ...msg, job: clampJob(msg.job || {}) };
       const j = msg.job || {};
       return mutate((vault) => {
         const existing = findJob(vault, { url: j.url, id: j.id });
@@ -1073,6 +1101,7 @@ async function handle(msg, sender) {
     }
 
     case "updateJob": {
+      msg = { ...msg, patch: clampJob(msg.patch || {}) };
       return mutate((vault) => {
         const job = vault.jobs.find((j) => j.id === msg.id);
         if (!job) throw new Error("That job is no longer in the tracker.");
@@ -1243,7 +1272,10 @@ async function handle(msg, sender) {
       return { ok: true };
 
     case "openUrls": {
-      for (const u of (msg.urls || []).slice(0, 20)) await chrome.tabs.create({ url: u, active: false });
+      for (const raw of (msg.urls || []).slice(0, 20)) {
+        const u = safeExternalUrl(raw);
+        if (u) await chrome.tabs.create({ url: u, active: false });
+      }
       return { ok: true, count: Math.min((msg.urls || []).length, 20) };
     }
 

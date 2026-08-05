@@ -1,3 +1,15 @@
+import { safeExternalUrl } from "./lib/sites.js";
+
+/**
+ * Opens a stored URL, or explains why it will not. Stored URLs come from pages
+ * and from imported backups, so they are checked rather than trusted.
+ */
+function openExternal(url, label = "that link") {
+  const safe = safeExternalUrl(url);
+  if (!safe) return toast(`${label} is not a web address JobVault will open.`);
+  chrome.tabs.create({ url: safe });
+}
+
 const $ = (s) => document.querySelector(s);
 const send = (m) => new Promise((r) => chrome.runtime.sendMessage(m, (res) => r(res || { ok: false, error: "No response from the vault." })));
 
@@ -148,8 +160,12 @@ async function unlockPin() {
 }
 $("#lk-unlock").onclick = unlockMaster;
 $("#lk-pin-unlock").onclick = unlockPin;
-$("#lk-pass").onkeydown = (e) => e.key === "Enter" && unlockMaster();
-$("#lk-pin").onkeydown = (e) => e.key === "Enter" && unlockPin();
+// A DOM0 handler that returns false is treated as preventDefault(), so a concise
+// arrow body like `(e) => e.key === "Enter" && go()` evaluates to false on every
+// other key and silently eats the keystroke. Braces, always. scripts/verify.sh
+// fails the build if this idiom reappears.
+$("#lk-pass").onkeydown = (e) => { if (e.key === "Enter") unlockMaster(); };
+$("#lk-pin").onkeydown = (e) => { if (e.key === "Enter") unlockPin(); };
 $("#lk-use-master").onclick = () => { $("#lk-pin-block").hidden = true; $("#lk-master-block").hidden = false; $("#lk-pass").focus(); };
 $("#lk-use-pin").onclick = () => { $("#lk-master-block").hidden = true; $("#lk-pin-block").hidden = false; $("#lk-pin").focus(); };
 
@@ -376,7 +392,7 @@ function jobRow(job) {
   // The old version had no concept of a saved job, so there was nothing to open.
   if (job.url) {
     actions.appendChild(button("mini go", "Open", () => {
-      chrome.tabs.create({ url: job.url });
+      openExternal(job.url, "That job link");
       window.close();
     }, job.url));
   }
@@ -399,7 +415,7 @@ function loginRow(entry) {
     catch { toast("Could not copy"); }
   }, "Copy the password"));
   actions.appendChild(button("mini go", "Open", () => {
-    chrome.tabs.create({ url: entry.url || `https://${entry.host}` });
+    openExternal(entry.url || `https://${entry.host}`, "That site");
     window.close();
   }));
   row.appendChild(actions);

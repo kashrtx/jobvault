@@ -68,14 +68,33 @@
     if (TRAP_TEXT.test(labelText(el))) return true;
     if (el.getAttribute("aria-hidden") === "true") return true;
     if (el.closest("[aria-hidden='true']")) return true;
-    if (el.tabIndex === -1 && !el.getAttribute("aria-label")) return true;
-    // Positioned off screen, which passes a plain visibility check.
+
+    const st = getComputedStyle(el);
+    if (st.clipPath && st.clipPath !== "none" && /inset\(\s*(100%|50%)/.test(st.clipPath)) return true;
+    if (parseFloat(st.opacity || "1") < 0.05) return true;
+
+    /**
+     * Off-screen positioning, measured in document coordinates.
+     *
+     * getBoundingClientRect is relative to the viewport, so an earlier version
+     * that tested `rect.bottom < 0` treated every field scrolled above the fold
+     * as a trap. On a long Workday step that meant the fields you had just
+     * scrolled past were silently skipped, and which ones depended on where the
+     * page happened to be scrolled. Adding the scroll offset makes the test
+     * about the document, which is what "off screen" actually means.
+     */
     const r = el.getBoundingClientRect();
-    if (r.right < 0 || r.bottom < 0) return true;
-    const s = getComputedStyle(el);
-    if (s.clipPath && s.clipPath !== "none" && /inset\(\s*(100%|50%)/.test(s.clipPath)) return true;
-    if (parseFloat(s.opacity || "1") < 0.05) return true;
-    if (s.position === "absolute" && (parseFloat(s.left) < -500 || parseFloat(s.top) < -500)) return true;
+    const docLeft = r.left + window.scrollX;
+    const docTop = r.top + window.scrollY;
+    const offScreen = docLeft < -600 || docTop < -600;
+    if (offScreen) return true;
+
+    /**
+     * tabindex="-1" alone is not evidence. Workday gives its own date sub-inputs
+     * tabindex="-1", and frameworks set it on controls they focus themselves, so
+     * treating it as a trap on its own skipped legitimate fields. It only counts
+     * alongside another signal, and by this point there are none left.
+     */
     return false;
   }
 
@@ -902,10 +921,30 @@
     return out;
   }
 
+  /**
+   * A readable employer name.
+   *
+   * Workday tenant sites carry one in the path, as in /en-US/407_ETR_Careers,
+   * which beats the hostname: the tenant label alone gives "407etr", and
+   * capitalising the first character of that gives "407etr" again because it
+   * starts with a digit.
+   */
   function prettyHost() {
+    const seg = location.pathname.split("/")
+      .find((p) => /_/.test(p) && /careers?|jobs?|talent/i.test(p));
+    if (seg) {
+      const name = decodeURIComponent(seg)
+        .replace(/_/g, " ")
+        .replace(/\b(careers?|jobs?|talent(\s+community)?|external|site)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (name.length > 1) return name;
+    }
+    const head = clean(document.querySelector('[data-automation-id="headerTitle"]')?.textContent || "");
+    if (head) return head.slice(0, 80);
     const labels = location.hostname.split(".");
-    const first = labels[0] || location.hostname;
-    return first.replace(/^www$/, labels[1] || first).replace(/^./, (c) => c.toUpperCase());
+    const first = (labels[0] === "www" ? labels[1] : labels[0]) || location.hostname;
+    return first.replace(/^[a-z]/, (c) => c.toUpperCase());
   }
 
   // --------------------------------------------------------- manual controls
@@ -1268,7 +1307,9 @@
         ? clean(`${pay.minValue || ""}${pay.minValue && pay.maxValue ? "\u2013" : ""}${pay.maxValue || pay.value || ""} ${pay.unitText || ""}`)
         : "",
       deadline: ld.validThrough ? Date.parse(ld.validThrough) || 0 : 0,
-      jdText: extractJobText(),
+      // A page can return an unbounded amount of text, and it is stored per job
+      // and copied into every snapshot. 60k is a generous job description.
+      jdText: extractJobText().slice(0, 60000),
     };
   }
 

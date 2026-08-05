@@ -1,5 +1,56 @@
 # Changelog
 
+## 2.3.0
+
+Hardening and correctness pass before the repository went public.
+
+### Fixed
+
+- **Bot-trap detection was skipping legitimate fields.** The off-screen test used
+  `getBoundingClientRect`, which is relative to the viewport, so `rect.bottom < 0`
+  was true for every field scrolled above the fold. On a long form the fields you
+  had just scrolled past were silently treated as traps, and which ones depended
+  on where the page happened to be scrolled. The test now uses document
+  coordinates. Both bugs were introduced by the trap detection added in 2.2.0.
+- **`tabindex="-1"` alone was treated as evidence of a trap.** Workday gives its
+  own date sub-inputs `tabindex="-1"`, and frameworks set it on controls they
+  focus themselves, so real fields were being skipped. Removed as a standalone
+  signal.
+- Employer name for imported applications came from the hostname, so a Workday
+  tenant like `407etr` stayed `407etr` — capitalising the first character does
+  nothing when it is a digit. It now reads the tenant path, so
+  `/en-US/407_ETR_Careers` gives "407 ETR".
+
+### Security
+
+- Every stored URL is re-parsed and must be `http` or `https` before it is
+  opened. Job URLs come from web pages and from imported backup files, so a
+  `javascript:`, `data:`, `blob:`, `file:` or `chrome-extension:` URL in a job
+  record now goes nowhere instead of being handed to `chrome.tabs.create` from a
+  privileged page. Verified against fourteen cases including mixed-case and
+  leading-whitespace scheme evasion.
+- Everything a page contributes to a job record is bounded and validated on the
+  way in: text is capped per field, dates that are `NaN`, negative or garbage
+  become 0, and a match score is clamped to 0–100. One hostile job shrank from
+  605KB to 65KB, which matters because job records are duplicated into all twelve
+  snapshots.
+- Audited every `innerHTML` interpolation across the extension pages; all values
+  are escaped.
+
+## 2.2.1
+
+### Fixed
+
+- **You could not type into the unlock, PIN, or add-email fields.** Five handlers
+  were written as `element.onkeydown = (e) => e.key === "Enter" && go()`. A
+  concise arrow body returns its expression, so on any other key the handler
+  returned `false`, and a DOM0 handler returning `false` is treated by the
+  browser as `preventDefault()`. Every ordinary keystroke was cancelled before a
+  character could be inserted. Pasting fires a `paste` event rather than
+  `keydown`, which is why pasting was the only thing that worked. All five now
+  use block bodies, and `scripts/verify.sh` fails the build if the idiom returns,
+  since nothing about it is a syntax error.
+
 ## 2.2.0
 
 Built from captured DOM of a complete Workday flow: sign-in, candidate home, job

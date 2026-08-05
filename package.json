@@ -1,6 +1,6 @@
 {
   "name": "jobvault",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Password manager and application tracker for job hunting, for Chrome and Brave.",
   "type": "module",
   "private": true,

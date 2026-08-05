@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobVault",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Job application command centre. Fills the right login for the right Workday tenant, fills the 40-field application form, and tracks every job you save or apply to.",
   "minimum_chrome_version": "116",
   "permissions": [

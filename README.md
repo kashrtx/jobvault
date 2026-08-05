@@ -21,6 +21,14 @@ optional aliases when a company splits its login and its job board across two
 domains. A password saved for one Workday tenant is never offered to another,
 which is the entire point and the thing generic managers get wrong.
 
+**It avoids the bot traps.** Portals plant a field that only an automated
+filler would touch, then flag the application when it comes back populated.
+Workday's is an input named `website`, labelled "This input is for robots only,
+do not enter if you're human" — exactly what a generic portfolio-URL matcher
+reaches for. JobVault detects traps by name, label wording, off-screen
+positioning, clip and opacity, and never fills them, including during a manual
+section fill.
+
 **Autofill that survives single-page apps.** Workday, Greenhouse, Lever, Ashby,
 SmartRecruiters, Workable, iCIMS, Taleo, SuccessFactors and BambooHR render their
 forms well after the page reports itself loaded. JobVault watches the DOM and
@@ -263,6 +271,18 @@ Content scripts are given credentials only for the origin being acted on, at the
 moment of the fill, and only in the top frame or a same-origin frame. Passwords
 are not broadcast to pages ahead of time.
 
+**Untrusted input is treated as untrusted.** Job titles, company names, notes
+and URLs all originate in web pages, and later get rendered in a privileged
+extension page and opened in tabs. Every value rendered into markup is escaped.
+Every stored URL is re-parsed before it is opened and must be `http` or `https`,
+so a `javascript:`, `data:`, `blob:` or `file:` URL smuggled into a job record or
+an imported backup goes nowhere. Text captured from a page is length-bounded
+before it is stored, because it is duplicated into every snapshot.
+
+**A value has to suit the field before it is written.** Matching is heuristic, so
+a wrong guess is inevitable; the guard makes the failure mode "field left empty"
+rather than "email address submitted as a phone extension".
+
 Recovery, backups and what happens if the vault cannot be read are covered under
 [Your data](#your-data) above.
 
@@ -339,4 +359,15 @@ native/               optional git updater host
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
 
+Worth being clear about what that does, because permissive licences are often
+chosen for the opposite of what they achieve. Apache-2.0 lets anyone use, modify,
+redistribute and sell this code, including inside closed-source products. What it
+adds over MIT is an explicit patent grant from contributors, a requirement to
+keep the `NOTICE` file and the licence text, and a requirement to state which
+files were changed. So it buys attribution and patent protection. It does not
+prevent anyone from forking this, renaming it, or shipping it commercially.
 
+If the goal is that derivatives must stay open, that is GPL-3.0 or AGPL-3.0. If
+the goal is that nobody else may use it commercially at all, no open-source
+licence does that; that needs a source-available licence such as the Business
+Source License, or simply keeping the repository private.

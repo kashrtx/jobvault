@@ -1,5 +1,17 @@
 import { GROUPS, WORK_HISTORY_FIELDS, EDUCATION_FIELDS, normalizeProfile, completeness } from "./lib/profile.js";
 import { computeMatch, verdict } from "./lib/match.js";
+import { safeExternalUrl } from "./lib/sites.js";
+
+/**
+ * Opens a stored URL, or explains why it will not. Stored URLs come from pages
+ * and from imported backups, so they are checked rather than trusted.
+ */
+function openExternal(url, label = "that link") {
+  const safe = safeExternalUrl(url);
+  if (!safe) return toast(`${label} is not a web address JobVault will open.`);
+  chrome.tabs.create({ url: safe });
+}
+
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -100,8 +112,12 @@ async function tryUnlock(payload) {
 }
 $("#gate-go").onclick = () => tryUnlock({ type: "unlock", password: $("#gate-pass").value });
 $("#gate-pin-go").onclick = () => tryUnlock({ type: "unlockPin", pin: $("#gate-pin").value });
-$("#gate-pass").onkeydown = (e) => e.key === "Enter" && $("#gate-go").click();
-$("#gate-pin").onkeydown = (e) => e.key === "Enter" && $("#gate-pin-go").click();
+// A DOM0 handler that returns false is treated as preventDefault(), so a concise
+// arrow body like `(e) => e.key === "Enter" && go()` evaluates to false on every
+// other key and silently eats the keystroke. Braces, always. scripts/verify.sh
+// fails the build if this idiom reappears.
+$("#gate-pass").onkeydown = (e) => { if (e.key === "Enter") $("#gate-go").click(); };
+$("#gate-pin").onkeydown = (e) => { if (e.key === "Enter") $("#gate-pin-go").click(); };
 $("#gate-use-master").onclick = () => { $("#gate-pin-block").hidden = true; $("#gate-master-block").hidden = false; $("#gate-pass").focus(); };
 
 async function enter() {
@@ -327,7 +343,7 @@ function renderJobs() {
     const first = due[0];
     $("#followTitle").textContent = due.length === 1 ? "One application is going quiet" : `${due.length} applications are going quiet`;
     $("#followText").textContent = `${first.company} \u2014 ${first.title}, applied ${ago(first.appliedAt)}.`;
-    $("#followOpen").onclick = () => { if (first.url) chrome.tabs.create({ url: first.url }); else openJobEditor(first); };
+    $("#followOpen").onclick = () => { if (first.url) openExternal(first.url, "That job link"); else openJobEditor(first); };
     $("#followSnooze").onclick = async () => {
       await send({ type: "snoozeFollowUp", id: first.id, days: 7 });
       vault = (await send({ type: "getVault" })).vault;
@@ -402,7 +418,7 @@ function jobRow(job) {
   };
   actions.appendChild(sel);
   // The complaint that started this rebuild: a saved job you cannot open.
-  if (job.url) actions.appendChild(button("mini go", "Open", () => chrome.tabs.create({ url: job.url }), job.url));
+  if (job.url) actions.appendChild(button("mini go", "Open", () => openExternal(job.url, "That job link"), job.url));
   actions.appendChild(button("mini", "Details", () => openJobEditor(job)));
   actions.appendChild(button("mini bad", "Delete", async () => {
     if (!confirm(`Remove ${job.company} \u2014 ${job.title} from the tracker?`)) return;
@@ -590,7 +606,7 @@ function loginRow(entry) {
     try { await navigator.clipboard.writeText(entry.password || ""); toast("Password copied"); }
     catch { toast("Could not copy"); }
   }));
-  actions.appendChild(button("mini go", "Open", () => chrome.tabs.create({ url: entry.url || `https://${entry.host}` })));
+  actions.appendChild(button("mini go", "Open", () => openExternal(entry.url || `https://${entry.host}`, "That site")));
   actions.appendChild(button("mini", "Edit", () => openLoginEditor(entry)));
   actions.appendChild(button("mini bad", "Delete", () => {
     if (!confirm(`Delete the saved login for ${entry.company || entry.host}?`)) return;
@@ -829,7 +845,7 @@ $("#emailAddBtn").onclick = () => {
   persist("profile");
   renderProfile();
 };
-$("#emailAdd").onkeydown = (e) => e.key === "Enter" && $("#emailAddBtn").click();
+$("#emailAdd").onkeydown = (e) => { if (e.key === "Enter") $("#emailAddBtn").click(); };
 
 // -------------------------------------------------------------------- resume
 
@@ -1088,7 +1104,7 @@ function renderUpdateStatus() {
     $("#updateCmdText").textContent = `cd /path/to/jobvault && ./scripts/update.sh`;
   }
   $("#updOpen").hidden = !update?.latestUrl;
-  $("#updOpen").onclick = () => chrome.tabs.create({ url: update.latestUrl });
+  $("#updOpen").onclick = () => openExternal(update.latestUrl, "The commit link");
 
   const commits = $("#updateCommits");
   commits.innerHTML = "";
