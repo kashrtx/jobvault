@@ -1,13 +1,28 @@
 {
   "manifest_version": 3,
   "name": "JobVault",
-  "version": "1.1.0",
-  "description": "A private, on-device password manager built for Workday and job application sites. Fills the right login for the right company, makes strong passwords, and checks your resume against a job post.",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "alarms"],
-  "host_permissions": ["<all_urls>"],
+  "version": "2.0.1",
+  "description": "Job application command centre. Fills the right login for the right Workday tenant, fills the 40-field application form, and tracks every job you save or apply to.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "alarms",
+    "notifications",
+    "contextMenus"
+  ],
+  "optional_permissions": [
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "JobVault",
+    "default_title": "JobVault (Ctrl+Shift+Y)",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -20,12 +35,45 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": false
     }
   ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open JobVault"
+    },
+    "fill-login": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Fill the login on this page"
+    },
+    "fill-application": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "Fill the application form on this page"
+    },
+    "save-job": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Save this job to the tracker"
+    }
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

@@ -1,474 +1,450 @@
-import { computeMatch } from "./lib/match.js";
-
 const $ = (s) => document.querySelector(s);
-const $$ = (s) => Array.from(document.querySelectorAll(s));
-const send = (msg) => new Promise((r) => chrome.runtime.sendMessage(msg, (res) => r(res || { ok: false })));
+const send = (m) => new Promise((r) => chrome.runtime.sendMessage(m, (res) => r(res || { ok: false, error: "No response from the vault." })));
 
 let vault = null;
-let editingKey = null;
+let state = null;
+let tab = null;
+let summary = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function toast(text) {
   const t = $("#toast");
   t.textContent = text;
   t.hidden = false;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => (t.hidden = true), 2200);
-}
-async function copy(text, label) {
-  try {
-    await navigator.clipboard.writeText(text || "");
-    toast(`${label} copied`);
-  } catch {
-    toast("Could not copy");
-  }
-}
-function show(view) {
-  ["onboard", "lock", "main"].forEach((v) => ($(`#view-${v}`).hidden = v !== view));
-  $("#lockBtn").hidden = view !== "main";
-}
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  toast._t = setTimeout(() => (t.hidden = true), 2400);
 }
 
-// ---------------- init ----------------
+function show(view) {
+  for (const v of ["onboard", "lock", "main"]) $(`#view-${v}`).hidden = v !== view;
+  $("#lockBtn").hidden = view !== "main";
+  $("#dashBtn").hidden = view !== "main";
+}
+
+const el = (tag, cls, html) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+};
+
+function button(cls, label, onClick, title) {
+  const b = el("button", cls, esc(label));
+  if (title) b.title = title;
+  b.type = "button";
+  b.onclick = onClick;
+  return b;
+}
+
+const STATUS = {
+  saved: "Saved", applied: "Applied", assessment: "Assessment", interview: "Interview",
+  offer: "Offer", rejected: "Rejected", ghosted: "No reply", withdrawn: "Withdrawn",
+};
+
+function ago(ts) {
+  if (!ts) return "";
+  const d = Math.floor((Date.now() - ts) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 30) return `${d} days ago`;
+  const m = Math.floor(d / 30);
+  return `${m} month${m === 1 ? "" : "s"} ago`;
+}
+
+/** Hostname with the tenant segment in brass. */
+function tenantHTML(host) {
+  const h = String(host || "").toLowerCase();
+  if (!h) return "";
+  const labels = h.split(".");
+  const isWorkday = /myworkdayjobs\.com$|myworkdaysite\.com$|\.wd\d+\./.test(h);
+  if (labels.length > 2 && labels[0] !== "www" && (isWorkday || labels.length > 3)) {
+    return `<b>${esc(labels[0])}</b>${esc("." + labels.slice(1).join("."))}`;
+  }
+  return esc(h);
+}
+
+// -------------------------------------------------------------------- init
+
 async function init() {
-  const state = await send({ type: "getState" });
+  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  state = await send({ type: "getState" });
+  $("#footVersion").textContent = "v" + (state.version || "");
+  renderUpdatePill(state.update);
+
   if (!state.hasVault) return show("onboard");
-  if (!state.unlocked) return showLock(state);
+  if (!state.unlocked) return showLock();
   await enterMain();
 }
 
-function showLock(state) {
+function renderUpdatePill(update) {
+  const pill = $("#updatePill");
+  if (!update || !update.behind) return (pill.hidden = true);
+  pill.hidden = false;
+  $("#updateText").textContent = update.latestVersion
+    ? `Update available \u2014 v${update.latestVersion}`
+    : `New commit on ${update.branch} \u2014 ${update.latestShortSha || ""}`;
+}
+$("#updateGo").onclick = () => send({ type: "openDashboard", hash: "#settings" });
+
+function showLock() {
   show("lock");
   const usePin = state.hasPin && !state.pinLocked;
   $("#lk-pin-block").hidden = !usePin;
   $("#lk-master-block").hidden = usePin;
   $("#lk-use-pin").hidden = !state.hasPin;
-  if (usePin) setTimeout(() => $("#lk-pin").focus(), 50);
-  else setTimeout(() => $("#lk-pass").focus(), 50);
-  if (state.pinLocked) {
-    $("#lk-msg").className = "msg";
-    $("#lk-msg").textContent = "Too many PIN tries. Use your master password.";
-  }
+  setTimeout(() => (usePin ? $("#lk-pin") : $("#lk-pass")).focus(), 60);
+  if (state.pinLocked) $("#lk-msg").textContent = "Too many PIN tries. Use your master password.";
 }
 
-// ---------------- onboarding ----------------
-$("#ob-create").addEventListener("click", async () => {
+async function enterMain() {
+  const res = await send({ type: "getVault" });
+  if (!res.ok) { state = await send({ type: "getState" }); return showLock(); }
+  vault = res.vault;
+  show("main");
+  renderRecent();
+  renderPending();
+  makePassword();
+  await loadPageContext();
+}
+
+// --------------------------------------------------------------- onboarding
+
+$("#ob-create").onclick = async () => {
   const p1 = $("#ob-pass").value, p2 = $("#ob-pass2").value;
-  const email = $("#ob-email").value.trim(), pin = $("#ob-pin").value.trim();
+  const pin = $("#ob-pin").value.trim();
   const msg = $("#ob-msg");
   msg.className = "msg";
   if (p1.length < 8) return (msg.textContent = "Use at least 8 characters.");
   if (p1 !== p2) return (msg.textContent = "The two passwords do not match.");
   if (pin && !/^\d{4,12}$/.test(pin)) return (msg.textContent = "The PIN must be 4 to 12 digits.");
-  const res = await send({ type: "createVault", password: p1, defaultEmail: email });
-  if (!res.ok) return (msg.textContent = res.error || "Could not create the vault.");
+  const res = await send({ type: "createVault", password: p1, defaultEmail: $("#ob-email").value.trim() });
+  if (!res.ok) return (msg.textContent = res.error);
   if (pin) await send({ type: "setupPin", pin });
+  state = await send({ type: "getState" });
   await enterMain();
-});
+  send({ type: "openDashboard", hash: "#profile" });
+};
 
-// ---------------- unlock ----------------
-$("#lk-unlock").addEventListener("click", unlockMaster);
-$("#lk-pass").addEventListener("keydown", (e) => e.key === "Enter" && unlockMaster());
-$("#lk-pin-unlock").addEventListener("click", unlockPin);
-$("#lk-pin").addEventListener("keydown", (e) => e.key === "Enter" && unlockPin());
-$("#lk-use-master").addEventListener("click", () => { $("#lk-pin-block").hidden = true; $("#lk-master-block").hidden = false; $("#lk-pass").focus(); });
-$("#lk-use-pin").addEventListener("click", () => { $("#lk-master-block").hidden = true; $("#lk-pin-block").hidden = false; $("#lk-pin").focus(); });
+// ------------------------------------------------------------------ unlock
 
 async function unlockMaster() {
-  const msg = $("#lk-msg");
-  msg.className = "msg";
   const res = await send({ type: "unlock", password: $("#lk-pass").value });
-  if (!res.ok) return (msg.textContent = res.error || "Could not unlock.");
+  if (!res.ok) return ($("#lk-msg").textContent = res.error);
   $("#lk-pass").value = "";
+  state = await send({ type: "getState" });
   await enterMain();
 }
 async function unlockPin() {
-  const msg = $("#lk-msg-pin");
-  msg.className = "msg";
   const res = await send({ type: "unlockPin", pin: $("#lk-pin").value });
+  $("#lk-pin").value = "";
   if (!res.ok) {
-    msg.textContent = res.error || "Could not unlock.";
-    if (res.needMaster) { $("#lk-pin-block").hidden = true; $("#lk-master-block").hidden = false; }
-    $("#lk-pin").value = "";
+    $("#lk-msg-pin").textContent = res.error;
+    if (res.needMaster) { $("#lk-pin-block").hidden = true; $("#lk-master-block").hidden = false; $("#lk-pass").focus(); }
     return;
   }
-  $("#lk-pin").value = "";
+  state = await send({ type: "getState" });
   await enterMain();
 }
+$("#lk-unlock").onclick = unlockMaster;
+$("#lk-pin-unlock").onclick = unlockPin;
+$("#lk-pass").onkeydown = (e) => e.key === "Enter" && unlockMaster();
+$("#lk-pin").onkeydown = (e) => e.key === "Enter" && unlockPin();
+$("#lk-use-master").onclick = () => { $("#lk-pin-block").hidden = true; $("#lk-master-block").hidden = false; $("#lk-pass").focus(); };
+$("#lk-use-pin").onclick = () => { $("#lk-master-block").hidden = true; $("#lk-pin-block").hidden = false; $("#lk-pin").focus(); };
 
-$("#lockBtn").addEventListener("click", async () => {
+$("#lockBtn").onclick = async () => {
   await send({ type: "lock" });
   vault = null;
-  const state = await send({ type: "getState" });
-  showLock(state);
-});
+  state = await send({ type: "getState" });
+  showLock();
+};
+$("#dashBtn").onclick = () => send({ type: "openDashboard" });
+$("#footDash").onclick = () => send({ type: "openDashboard" });
 
-// ---------------- enter main ----------------
-async function enterMain() {
-  const res = await send({ type: "getVault" });
-  if (!res.ok) { const s = await send({ type: "getState" }); return showLock(s); }
-  vault = res.vault;
-  show("main");
-  renderEntries();
-  refreshEmailOptions();
-  loadSettings();
-  renderEmails();
-  loadResume();
-  makePassword();
-  checkPending();
-  refreshPinUI();
+// ------------------------------------------------------------- page context
+
+/** Ask the content script what kind of page this is. */
+async function askPage() {
+  if (!tab?.id) return null;
+  if (/^(chrome|edge|brave|about|chrome-extension|devtools|view-source):/i.test(tab.url || "")) {
+    return { unsupported: true };
+  }
+  try {
+    const res = await chrome.tabs.sendMessage(tab.id, { type: "pageSummary" });
+    return res?.ok ? res : { unreachable: true };
+  } catch {
+    return { unreachable: true };
+  }
 }
 
-// ---------------- tabs ----------------
-$$(".tab").forEach((tab) =>
-  tab.addEventListener("click", () => {
-    $$(".tab").forEach((t) => t.classList.remove("active"));
-    tab.classList.add("active");
-    $$(".panel").forEach((p) => (p.hidden = p.dataset.panel !== tab.dataset.tab));
-  })
-);
+async function loadPageContext() {
+  const body = $("#page-body");
+  summary = await askPage();
+  body.innerHTML = "";
+  $("#page-ats").hidden = !summary?.ats;
+  if (summary?.ats) $("#page-ats").textContent = summary.ats;
 
-// ---------------- vault list ----------------
-const initials = (n) => (n || "?").trim().slice(0, 2).toUpperCase();
+  if (!summary || summary.unsupported) {
+    body.appendChild(el("p", "panel-sub", "Browser pages are off limits to extensions. Open a careers site and JobVault wakes up."));
+    return;
+  }
+  if (summary.unreachable) {
+    body.appendChild(el("p", "panel-sub", "JobVault cannot see this tab yet. That happens right after the extension reloads."));
+    body.appendChild(button("btn ghost wide", "Reload the tab", async () => {
+      await chrome.tabs.reload(tab.id);
+      window.close();
+    }));
+    return;
+  }
 
-function renderEntries() {
-  const q = $("#search").value.trim().toLowerCase();
-  const list = Object.values(vault.entries || {}).sort((a, b) => (a.company || a.host).localeCompare(b.company || b.host));
-  const filtered = list.filter((e) => !q || (e.company || "").toLowerCase().includes(q) || (e.host || "").toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q));
-  const box = $("#entries");
-  box.innerHTML = "";
-  $("#empty").hidden = list.length > 0;
-  filtered.forEach((e) => {
-    const card = document.createElement("div");
-    card.className = "entry";
-    card.innerHTML = `
-      <div class="entry-top">
-        <div class="avatar">${escapeHtml(initials(e.company || e.host))}</div>
-        <div class="entry-meta">
-          <div class="entry-company">${escapeHtml(e.company || e.host)}</div>
-          <div class="entry-host">${escapeHtml(e.host)}</div>
-        </div>
-      </div>
-      <div class="entry-email">${escapeHtml(e.email || "no email saved")}</div>
-      <div class="entry-pass" data-role="pass">••••••••••••</div>
-      <div class="entry-actions">
-        <button class="chipbtn" data-act="reveal">Show</button>
-        <button class="chipbtn" data-act="copyUser">Copy email</button>
-        <button class="chipbtn" data-act="copyPass">Copy password</button>
-        <button class="chipbtn" data-act="open">Open site</button>
-        <button class="chipbtn" data-act="edit">Edit</button>
-        <button class="chipbtn danger" data-act="del">Delete</button>
-      </div>`;
-    const passEl = card.querySelector('[data-role="pass"]');
-    card.querySelectorAll("[data-act]").forEach((btn) =>
-      btn.addEventListener("click", () => {
-        const act = btn.dataset.act;
-        if (act === "reveal") {
-          const hidden = passEl.textContent === "••••••••••••";
-          passEl.textContent = hidden ? e.password || "no password saved" : "••••••••••••";
-          btn.textContent = hidden ? "Hide" : "Show";
-        } else if (act === "copyUser") copy(e.email, "Email");
-        else if (act === "copyPass") copy(e.password, "Password");
-        else if (act === "open") chrome.tabs.create({ url: e.url || `https://${e.host}` });
-        else if (act === "edit") openModal(e);
-        else if (act === "del" && confirm(`Delete the saved login for ${e.company || e.host}?`)) {
-          delete vault.entries[e.host];
-          persist();
-          renderEntries();
-        }
-      })
-    );
-    box.appendChild(card);
-  });
+  const ctx = await send({ type: "pageContext", url: summary.url });
+  const host = summary.host;
+  const tracked = ctx.ok ? ctx.job : null;
+
+  // 1. a login or sign-up screen
+  if (summary.hasLoginForm) {
+    const matches = ctx.matches || [];
+    if (matches.length) {
+      body.appendChild(el("div", "panel-title", esc(matches[0].company)));
+      body.appendChild(el("p", "panel-sub", `${esc(matches[0].email || "no email saved")} \u00b7 saved login`));
+      body.appendChild(el("div", "tenant", tenantHTML(matches[0].host)));
+      let chosen = matches[0].id;
+      if (matches.length > 1) {
+        const sel = document.createElement("select");
+        matches.forEach((m) => {
+          const o = document.createElement("option");
+          o.value = m.id;
+          o.textContent = `${m.company} \u00b7 ${m.email || "no email"}${m.exact ? "" : " (other subdomain)"}`;
+          sel.appendChild(o);
+        });
+        sel.onchange = () => (chosen = sel.value);
+        body.appendChild(sel);
+      }
+      body.appendChild(button("btn primary wide", "Fill this login", () => act("fillLoginNow", { id: chosen })));
+      return;
+    }
+    body.appendChild(el("div", "panel-title", summary.isSignup ? `New account at ${esc(ctx.company || host)}` : `No saved login for ${esc(ctx.company || host)}`));
+    body.appendChild(el("div", "tenant", tenantHTML(host)));
+    body.appendChild(el("p", "panel-sub", summary.isSignup
+      ? "JobVault will pick a strong password and remember it once you finish signing up."
+      : "Sign in normally and JobVault will offer to save it."));
+    if (summary.isSignup) {
+      body.appendChild(button("btn primary wide", "Fill email and a strong password", () => act("fillLoginNow")));
+    } else {
+      body.appendChild(button("btn ghost wide", "Fill my email", () => act("fillLoginNow")));
+    }
+    return;
+  }
+
+  // 2. an application form
+  if (summary.appFields >= 4) {
+    body.appendChild(el("div", "panel-title", "Application form"));
+    body.appendChild(el("p", "panel-sub",
+      `${summary.appFields} field${summary.appFields === 1 ? "" : "s"} on this page match your profile.` +
+      (ctx.profileFields ? ` You have <b>${ctx.profileFields}</b> answers saved.` : "")));
+    if (!ctx.profileFields) {
+      body.appendChild(button("btn primary wide", "Fill in your profile first", () => send({ type: "openDashboard", hash: "#profile" })));
+    } else {
+      body.appendChild(button("btn primary wide", "Fill the form", () => act("fillApplicationNow")));
+    }
+    if (summary.isPosting || tracked) {
+      body.appendChild(button("btn ghost wide", tracked ? "Mark as applied" : "Also save to tracker", async () => {
+        if (tracked) { await send({ type: "updateJob", id: tracked.id, patch: { status: "applied" } }); toast("Marked as applied"); }
+        else act("saveJobNow");
+      }));
+    }
+    return;
+  }
+
+  // 3. a job posting
+  if (summary.isPosting && summary.job) {
+    body.appendChild(el("div", "panel-title", esc(summary.job.title || "Job posting")));
+    const parts = [summary.job.company, summary.job.location].filter(Boolean).map(esc).join(" \u00b7 ");
+    if (parts) body.appendChild(el("p", "panel-sub", parts));
+    if (tracked) {
+      const sub = el("p", "panel-sub", "");
+      sub.innerHTML = `<span class="pip st-${esc(tracked.status)}">${esc(STATUS[tracked.status] || tracked.status)}</span> \u00b7 already in your tracker`;
+      body.appendChild(sub);
+      const row = el("div", "btn-row");
+      row.appendChild(button("btn primary", "Mark as applied", async () => {
+        await send({ type: "updateJob", id: tracked.id, patch: { status: "applied" } });
+        toast("Marked as applied");
+        loadPageContext();
+      }));
+      row.appendChild(button("btn ghost", "Open tracker", () => send({ type: "openDashboard", hash: "#jobs" })));
+      body.appendChild(row);
+    } else {
+      body.appendChild(button("btn primary wide", "Save this job", () => act("saveJobNow")));
+      if (ctx.hasResume) {
+        body.appendChild(button("btn ghost wide", "Check it against my resume", async () => {
+          const scraped = await chrome.tabs.sendMessage(tab.id, { type: "scrapeJob" });
+          if (!scraped?.jdText) return toast("Could not read the posting text");
+          const m = await send({ type: "matchJob", text: scraped.jdText });
+          if (!m?.result) return toast("Add your resume in the dashboard first");
+          toast(`${m.result.score}% match \u00b7 ${m.result.mustHaveMissing.length} requirement gaps`);
+        }));
+      }
+    }
+    return;
+  }
+
+  // 4. nothing special
+  body.appendChild(el("div", "panel-title", esc(ctx.company || host || "This page")));
+  body.appendChild(el("div", "tenant", tenantHTML(host)));
+  body.appendChild(el("p", "panel-sub", "No login or application form spotted here. Shortcuts still work if you think one is hiding."));
+  const row = el("div", "btn-row");
+  row.appendChild(button("btn ghost", "Try login", () => act("fillLoginNow")));
+  row.appendChild(button("btn ghost", "Try form", () => act("fillApplicationNow")));
+  body.appendChild(row);
 }
-$("#search").addEventListener("input", renderEntries);
-$("#add-manual").addEventListener("click", () => openModal(null));
 
-// ---------------- modal ----------------
-function openModal(entry) {
-  editingKey = entry ? entry.host : null;
-  $("#modal-title").textContent = entry ? "Edit login" : "Add a login";
-  $("#md-company").value = entry ? entry.company || "" : "";
-  $("#md-host").value = entry ? entry.host || "" : "";
-  $("#md-email").value = entry ? entry.email || "" : vault.profile.defaultEmail || "";
-  $("#md-password").value = entry ? entry.password || "" : "";
-  $("#md-note").value = entry ? entry.note || "" : "";
-  $("#modal").hidden = false;
+/** Fire a content-script action, then close so the page is visible underneath. */
+async function act(type, extra = {}) {
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type, ...extra });
+    window.close();
+  } catch {
+    toast("Reload the tab, then try again");
+  }
 }
-$("#md-cancel").addEventListener("click", () => ($("#modal").hidden = true));
-$("#md-save").addEventListener("click", () => {
-  const hostv = $("#md-host").value.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  if (!hostv) return toast("A site is required");
-  if (editingKey && editingKey !== hostv) delete vault.entries[editingKey];
-  const prev = vault.entries[hostv] || {};
-  const email = $("#md-email").value.trim();
-  vault.entries[hostv] = {
-    host: hostv, url: prev.url || `https://${hostv}`,
-    company: $("#md-company").value.trim() || hostv,
-    email, password: $("#md-password").value, note: $("#md-note").value.trim(),
-    createdAt: prev.createdAt || Date.now(), updatedAt: Date.now(), usedCount: prev.usedCount || 0,
-  };
-  if (email && !vault.profile.emails.includes(email)) { vault.profile.emails.push(email); if (!vault.profile.defaultEmail) vault.profile.defaultEmail = email; }
-  persist();
-  $("#modal").hidden = true;
-  renderEntries();
-  renderEmails();
-  refreshEmailOptions();
-  toast("Saved");
-});
 
-// ---------------- pending ----------------
-async function checkPending() {
+// ------------------------------------------------------------------ pending
+
+async function renderPending() {
   const res = await send({ type: "getPending" });
   const p = res.pending;
-  if (!p) return ($("#pending").hidden = true);
-  $("#pending").hidden = false;
-  $("#pending-detail").textContent = `${p.company || p.host} · ${p.email || "no email"}`;
-  $("#pending-save").onclick = () => {
-    const prev = vault.entries[p.host] || {};
-    vault.entries[p.host] = {
-      host: p.host, url: p.url || `https://${p.host}`, company: p.company || p.host,
-      email: p.email || prev.email || "", password: p.password || prev.password || "",
-      note: prev.note || "", createdAt: prev.createdAt || Date.now(), updatedAt: Date.now(), usedCount: prev.usedCount || 0,
-    };
-    if (p.email && !vault.profile.emails.includes(p.email)) vault.profile.emails.push(p.email);
-    persist();
-    send({ type: "clearPending" });
+  $("#pending").hidden = !p;
+  if (!p) return;
+  $("#pending-detail").textContent = `${p.company || p.host} \u00b7 ${p.email || "no email"}`;
+  $("#pending-save").onclick = async () => {
+    const r = await send({ type: "savePending" });
+    if (!r.ok) return toast(r.error);
     $("#pending").hidden = true;
-    renderEntries();
-    renderEmails();
+    vault = (await send({ type: "getVault" })).vault;
     toast("Login saved");
   };
-  $("#pending-dismiss").onclick = () => { send({ type: "clearPending" }); $("#pending").hidden = true; };
+  $("#pending-dismiss").onclick = async () => {
+    await send({ type: "clearPending" });
+    $("#pending").hidden = true;
+  };
 }
 
-// ---------------- generator ----------------
-const genOpts = () => ({
-  length: parseInt($("#gen-len").value, 10),
-  upper: $("#opt-upper").checked, lower: $("#opt-lower").checked,
-  digits: $("#opt-digits").checked, symbols: $("#opt-symbols").checked,
-});
-async function makePassword() {
-  const opts = genOpts();
-  const res = await send({ type: "generatePassword", opts });
-  if (res.ok) { $("#gen-out").textContent = res.password; strength(res.password, opts); }
-}
-function strength(pw, opts) {
-  let pool = 0;
-  if (opts.lower) pool += 24;
-  if (opts.upper) pool += 24;
-  if (opts.digits) pool += 8;
-  if (opts.symbols) pool += 13;
-  const bits = pw.length * (Math.log(pool || 26) / Math.log(2));
-  const bar = $("#gen-strength-bar");
-  bar.style.width = Math.min(100, Math.round(bits / 1.3)) + "%";
-  let label, color;
-  if (bits < 45) { label = "Weak"; color = "var(--danger)"; }
-  else if (bits < 70) { label = "Fair"; color = "var(--brass)"; }
-  else if (bits < 100) { label = "Strong"; color = "var(--brass)"; }
-  else { label = "Excellent"; color = "var(--ok)"; }
-  bar.style.background = color;
-  $("#gen-strength").textContent = label;
-}
-$("#gen-refresh").addEventListener("click", makePassword);
-$("#gen-copy").addEventListener("click", () => copy($("#gen-out").textContent, "Password"));
-$("#gen-len").addEventListener("input", () => { $("#gen-len-label").textContent = $("#gen-len").value; makePassword(); });
-["opt-upper", "opt-lower", "opt-digits", "opt-symbols"].forEach((id) => $("#" + id).addEventListener("change", makePassword));
+// -------------------------------------------------------------------- lists
 
-// ---------------- resume + match ----------------
-function loadResume() { $("#resume").value = (vault.resume && vault.resume.text) || ""; }
-$("#resume-save").addEventListener("click", () => { vault.resume = { text: $("#resume").value, updatedAt: Date.now() }; persist(); toast("Resume saved"); });
-$("#resume-file").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const text = await file.text();
-  $("#resume").value = text;
-  vault.resume = { text, updatedAt: Date.now() };
-  persist();
-  toast("Resume loaded");
-});
-$("#scan-page").addEventListener("click", async () => {
-  const resume = ($("#resume").value || "").trim();
-  if (!resume) return toast("Add your resume first");
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) return toast("No active tab");
-  chrome.tabs.sendMessage(tab.id, { type: "scrapeJob" }, (res) => {
-    if (chrome.runtime.lastError || !res || !res.ok || !res.text) return toast("Could not read this page. Try the paste box.");
-    renderMatch(computeMatch(resume, res.text), res.title || tab.title);
-  });
-});
-$("#match-pasted").addEventListener("click", () => {
-  const resume = ($("#resume").value || "").trim();
-  const jd = ($("#jd").value || "").trim();
-  if (!resume) return toast("Add your resume first");
-  if (!jd) return toast("Paste a job description");
-  renderMatch(computeMatch(resume, jd), "Pasted job description");
-});
-
-function renderMatch(result, title) {
-  $("#match-result").hidden = false;
-  const ring = $("#ring-fg");
-  const circ = 327;
-  ring.style.strokeDashoffset = circ - (circ * result.score) / 100;
-  ring.style.stroke = result.score >= 70 ? "var(--ok)" : result.score >= 45 ? "var(--brass)" : "var(--miss)";
-  const numEl = $("#score-num");
-  let n = 0;
-  clearInterval(renderMatch._t);
-  renderMatch._t = setInterval(() => {
-    n += Math.max(1, Math.round(result.score / 20));
-    if (n >= result.score) { n = result.score; clearInterval(renderMatch._t); }
-    numEl.textContent = n;
-  }, 24);
-  const verdict =
-    result.score >= 75 ? "Strong fit. Apply with confidence." :
-    result.score >= 55 ? "Solid fit. Tune your resume to the terms below." :
-    result.score >= 35 ? "Partial fit. Worth applying if the role excites you." :
-    "Light fit. This posting wants skills your resume does not show yet.";
-  $("#match-title").innerHTML = `<div style="color:var(--text);margin-bottom:4px">${escapeHtml(title || "")}</div>${verdict}`;
-  fillChips($("#chips-have"), result.have, "have", "Nothing from the posting matched yet.");
-  fillChips($("#chips-missing"), result.missing, "miss", "Nice, you cover the main terms.");
-}
-function fillChips(box, terms, cls, emptyText) {
-  box.innerHTML = "";
-  if (!terms.length) return (box.innerHTML = `<span class="muted small">${emptyText}</span>`);
-  terms.forEach((t) => { const c = document.createElement("span"); c.className = "chip " + cls; c.textContent = t; box.appendChild(c); });
-}
-
-// ---------------- emails ----------------
-function refreshEmailOptions() {
-  const dl = $("#email-options");
-  dl.innerHTML = "";
-  (vault.profile.emails || []).forEach((e) => { const o = document.createElement("option"); o.value = e; dl.appendChild(o); });
-}
-function renderEmails() {
-  const box = $("#email-list");
-  box.innerHTML = "";
-  const emails = vault.profile.emails || [];
-  if (!emails.length) return (box.innerHTML = `<div class="email-empty">No emails yet. Add the one you apply with.</div>`);
-  emails.forEach((e) => {
-    const row = document.createElement("div");
-    row.className = "email-row";
-    const isDefault = e === vault.profile.defaultEmail;
-    row.innerHTML = `<span class="addr">${escapeHtml(e)}</span>${isDefault ? '<span class="tag">Default</span>' : '<button class="setdef">Make default</button>'}<button class="rm">Remove</button>`;
-    const setdef = row.querySelector(".setdef");
-    if (setdef) setdef.onclick = () => { vault.profile.defaultEmail = e; persist(); renderEmails(); };
-    row.querySelector(".rm").onclick = () => {
-      vault.profile.emails = emails.filter((x) => x !== e);
-      if (vault.profile.defaultEmail === e) vault.profile.defaultEmail = vault.profile.emails[0] || "";
-      persist();
-      renderEmails();
-      refreshEmailOptions();
-    };
-    box.appendChild(row);
-  });
-}
-$("#email-add-btn").addEventListener("click", () => {
-  const v = $("#email-add").value.trim();
-  if (!v) return;
-  if (!vault.profile.emails.includes(v)) vault.profile.emails.push(v);
-  if (!vault.profile.defaultEmail) vault.profile.defaultEmail = v;
-  $("#email-add").value = "";
-  persist();
-  renderEmails();
-  refreshEmailOptions();
-});
-$("#email-add").addEventListener("keydown", (e) => e.key === "Enter" && $("#email-add-btn").click());
-
-// ---------------- settings ----------------
-function loadSettings() {
-  const s = vault.settings || {};
-  $("#set-autofill").checked = s.autofill !== false;
-  $("#set-matchopen").checked = s.matchOnOpen !== false;
-  $("#set-autolock").value = String(s.autolockMinutes ?? 15);
-}
-$("#set-save").addEventListener("click", () => {
-  vault.settings = vault.settings || {};
-  vault.settings.autofill = $("#set-autofill").checked;
-  vault.settings.matchOnOpen = $("#set-matchopen").checked;
-  vault.settings.autolockMinutes = parseInt($("#set-autolock").value, 10);
-  persist();
-  $("#set-msg").className = "msg ok";
-  $("#set-msg").textContent = "Settings saved.";
-  setTimeout(() => ($("#set-msg").textContent = ""), 1600);
-});
-
-// pin management
-async function refreshPinUI() {
-  const state = await send({ type: "getState" });
-  $("#pin-status").textContent = state.hasPin
-    ? "A quick unlock PIN is on. You can unlock with it instead of the master password."
-    : "Set a PIN for faster unlock. Your master password still works and stays your recovery key.";
-  $("#pin-setup-btn").textContent = state.hasPin ? "Change PIN" : "Set up a PIN";
-  $("#pin-remove-btn").hidden = !state.hasPin;
-}
-$("#pin-setup-btn").addEventListener("click", () => { $("#pin-setup").hidden = false; $("#pin-buttons").hidden = true; $("#pin-new").focus(); });
-$("#pin-cancel").addEventListener("click", () => { $("#pin-setup").hidden = true; $("#pin-buttons").hidden = false; $("#pin-new").value = $("#pin-new2").value = ""; });
-$("#pin-save").addEventListener("click", async () => {
-  const a = $("#pin-new").value.trim(), b = $("#pin-new2").value.trim();
-  const msg = $("#set-msg");
-  msg.className = "msg";
-  if (!/^\d{4,12}$/.test(a)) return (msg.textContent = "PIN must be 4 to 12 digits.");
-  if (a !== b) return (msg.textContent = "The two PINs do not match.");
-  const res = await send({ type: "setupPin", pin: a });
-  if (!res.ok) return (msg.textContent = res.error || "Could not set the PIN.");
-  $("#pin-new").value = $("#pin-new2").value = "";
-  $("#pin-setup").hidden = true;
-  $("#pin-buttons").hidden = false;
-  msg.className = "msg ok";
-  msg.textContent = "PIN saved.";
-  refreshPinUI();
-});
-$("#pin-remove-btn").addEventListener("click", async () => {
-  await send({ type: "disablePin" });
-  refreshPinUI();
-  toast("PIN turned off");
-});
-
-$("#cm-change").addEventListener("click", async () => {
-  const p1 = $("#cm-pass").value, p2 = $("#cm-pass2").value;
-  const msg = $("#set-msg");
-  msg.className = "msg";
-  if (p1.length < 8) return (msg.textContent = "Use at least 8 characters.");
-  if (p1 !== p2) return (msg.textContent = "The two passwords do not match.");
-  const res = await send({ type: "changeMaster", newPassword: p1 });
-  if (!res.ok) return (msg.textContent = res.error || "Could not change it.");
-  $("#cm-pass").value = $("#cm-pass2").value = "";
-  msg.className = "msg ok";
-  msg.textContent = "Master password changed.";
-});
-
-$("#export").addEventListener("click", async () => {
-  const local = await chrome.storage.local.get(["jv_meta", "jv_vault"]);
-  const blob = new Blob([JSON.stringify(local, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `jobvault-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast("Backup downloaded");
-});
-$("#import").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    if (!data.jv_meta || !data.jv_vault) throw new Error("bad");
-    if (!confirm("Importing replaces your current vault. Continue?")) return;
-    await chrome.storage.local.set({ jv_meta: data.jv_meta, jv_vault: data.jv_vault });
-    await send({ type: "lock" });
-    vault = null;
-    toast("Backup imported. Unlock with that master password.");
-    const state = await send({ type: "getState" });
-    showLock(state);
-  } catch {
-    toast("That file is not a JobVault backup");
+function jobRow(job) {
+  const row = el("div", "row");
+  const main = el("div", "row-main");
+  main.appendChild(el("div", "row-title", esc(job.title || "Untitled role")));
+  const sub = el("div", "row-sub");
+  sub.innerHTML =
+    `<span class="pip st-${esc(job.status)}">${esc(STATUS[job.status] || job.status)}</span>` +
+    `<span>${esc(job.company || job.host)}</span>` +
+    (job.appliedAt || job.savedAt ? `<span class="faint">${esc(ago(job.appliedAt || job.savedAt))}</span>` : "");
+  main.appendChild(sub);
+  row.appendChild(main);
+  if (job.matchScore != null) {
+    const b = el("span", "score-badge", `${job.matchScore}%`);
+    b.title = "Resume match when you saved it";
+    row.appendChild(b);
   }
-});
+  const actions = el("div", "row-actions");
+  // The old version had no concept of a saved job, so there was nothing to open.
+  if (job.url) {
+    actions.appendChild(button("mini go", "Open", () => {
+      chrome.tabs.create({ url: job.url });
+      window.close();
+    }, job.url));
+  }
+  actions.appendChild(button("mini", "Edit", () => send({ type: "openDashboard", hash: "#jobs/" + job.id })));
+  row.appendChild(actions);
+  return row;
+}
 
-// ---------------- util ----------------
-function persist() { send({ type: "saveVault", vault }); }
+function loginRow(entry) {
+  const row = el("div", "row");
+  const main = el("div", "row-main");
+  main.appendChild(el("div", "row-title", esc(entry.company || entry.host)));
+  const sub = el("div", "row-sub");
+  sub.innerHTML = `<span class="mono">${tenantHTML(entry.host)}</span>`;
+  main.appendChild(sub);
+  row.appendChild(main);
+  const actions = el("div", "row-actions");
+  actions.appendChild(button("mini", "Copy", async () => {
+    try { await navigator.clipboard.writeText(entry.password || ""); toast("Password copied"); }
+    catch { toast("Could not copy"); }
+  }, "Copy the password"));
+  actions.appendChild(button("mini go", "Open", () => {
+    chrome.tabs.create({ url: entry.url || `https://${entry.host}` });
+    window.close();
+  }));
+  row.appendChild(actions);
+  return row;
+}
 
-send({ type: "pingActivity" });
+function renderRecent() {
+  const box = $("#recent");
+  box.innerHTML = "";
+  const jobs = [...(vault.jobs || [])]
+    .sort((a, b) => (b.updatedAt || b.savedAt || 0) - (a.updatedAt || a.savedAt || 0))
+    .slice(0, 6);
+  $("#recent-empty").hidden = jobs.length > 0;
+  jobs.forEach((j) => box.appendChild(jobRow(j)));
+  const savedCount = (vault.jobs || []).filter((j) => j.status === "saved" && j.url).length;
+  $("#openSaved").hidden = savedCount === 0;
+  $("#openSaved").textContent = `Open all saved (${savedCount})`;
+}
+
+$("#openSaved").onclick = async () => {
+  const urls = (vault.jobs || []).filter((j) => j.status === "saved" && j.url).map((j) => j.url);
+  if (!urls.length) return;
+  const res = await send({ type: "openUrls", urls });
+  toast(`Opened ${res.count} tab${res.count === 1 ? "" : "s"}`);
+};
+
+$("#search").oninput = () => {
+  const q = $("#search").value.trim().toLowerCase();
+  const box = $("#results");
+  box.innerHTML = "";
+  $("#recent-wrap").hidden = Boolean(q);
+  if (!q) return;
+  const jobs = (vault.jobs || []).filter((j) =>
+    [j.title, j.company, j.host, j.location, j.notes].some((f) => String(f || "").toLowerCase().includes(q))
+  ).slice(0, 6);
+  const logins = Object.values(vault.logins || {}).filter((e) =>
+    [e.company, e.host, e.email].some((f) => String(f || "").toLowerCase().includes(q))
+  ).slice(0, 6);
+  if (!jobs.length && !logins.length) {
+    return box.appendChild(el("p", "empty", `Nothing matches \u201c${esc(q)}\u201d.`));
+  }
+  if (jobs.length) {
+    box.appendChild(el("div", "eyebrow", "Jobs"));
+    jobs.forEach((j) => box.appendChild(jobRow(j)));
+  }
+  if (logins.length) {
+    box.appendChild(el("div", "eyebrow", "Logins"));
+    logins.forEach((e) => box.appendChild(loginRow(e)));
+  }
+};
+
+// --------------------------------------------------------------- generator
+
+async function makePassword() {
+  const opts = {
+    length: parseInt($("#gen-len").value, 10),
+    avoidAmbiguous: vault?.settings?.avoidAmbiguous !== false,
+  };
+  const res = await send({ type: "generatePassword", opts });
+  if (!res.ok) return;
+  $("#gen-out").textContent = res.password;
+  $("#gen-bits").textContent = `${res.bits} bits of entropy`;
+}
+$("#gen-refresh").onclick = makePassword;
+$("#gen-len").oninput = () => { $("#gen-len-label").textContent = $("#gen-len").value; makePassword(); };
+$("#gen-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("#gen-out").textContent); toast("Password copied"); }
+  catch { toast("Could not copy"); }
+};
+
+send({ type: "ping" });
 init();

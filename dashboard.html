@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JobVault</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <!-- ---------------------------------------------------------------- lock -->
+  <section id="gate" class="gate" hidden>
+    <div class="gate-card">
+      <svg class="gate-mark" viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="8.5" cy="8.5" r="4" /><path d="M11.4 11.4 18 18" /><path d="M15.6 14.6l1.9 1.9" /><path d="M18.2 12.2l1.9 1.9" />
+      </svg>
+      <h1>Job<i>Vault</i></h1>
+      <p id="gate-lede" class="lede">Unlock to open your vault.</p>
+      <div id="gate-pin-block">
+        <label class="lbl" for="gate-pin">Quick unlock PIN</label>
+        <input id="gate-pin" type="password" inputmode="numeric" autocomplete="off" />
+        <button id="gate-pin-go" class="btn primary wide">Unlock</button>
+        <button id="gate-use-master" class="link centred">Use master password instead</button>
+      </div>
+      <div id="gate-master-block" hidden>
+        <label class="lbl" for="gate-pass">Master password</label>
+        <input id="gate-pass" type="password" autocomplete="current-password" />
+        <button id="gate-go" class="btn primary wide">Unlock</button>
+      </div>
+      <p id="gate-msg" class="msg"></p>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- app -->
+  <div id="app" class="app" hidden>
+    <header class="head">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8.5" cy="8.5" r="4" /><path d="M11.4 11.4 18 18" /><path d="M15.6 14.6l1.9 1.9" /><path d="M18.2 12.2l1.9 1.9" />
+        </svg>
+        <span class="wordmark">Job<i>Vault</i></span>
+      </div>
+      <div id="headUpdate" class="head-update" hidden>
+        <span id="headUpdateText"></span>
+        <button class="link" data-goto="settings">Review</button>
+      </div>
+      <div class="head-right">
+        <span id="headVersion" class="mono faint small"></span>
+        <button id="headLock" class="btn ghost small">Lock</button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <nav class="rail" aria-label="Sections">
+        <button class="nav" data-goto="jobs"><span>Applications</span><em id="navJobs"></em></button>
+        <button class="nav" data-goto="logins"><span>Logins</span><em id="navLogins"></em></button>
+        <button class="nav" data-goto="profile"><span>Profile</span><em id="navProfile"></em></button>
+        <button class="nav" data-goto="resume"><span>Resume</span></button>
+        <button class="nav" data-goto="answers"><span>Answers</span><em id="navAnswers"></em></button>
+        <button class="nav" data-goto="settings"><span>Settings</span></button>
+        <div class="rail-foot">
+          <div class="kbd-list">
+            <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>L</kbd><span>Fill login</span></div>
+            <div><kbd>Alt</kbd><kbd>Shift</kbd><kbd>F</kbd><span>Fill form</span></div>
+            <div><kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd><span>Save job</span></div>
+          </div>
+        </div>
+      </nav>
+
+      <main class="main">
+        <!-- ------------------------------------------------------- welcome -->
+        <section id="p-welcome" class="panel" hidden>
+          <h2 class="h2">Two things and you are set up</h2>
+          <p class="lede">JobVault saves its real time once your profile is filled in. Everything below stays encrypted on this machine.</p>
+          <ol class="steps">
+            <li><b>Fill in your profile.</b> Name, address, phone, links, work authorization. Every portal asks for these and you never type them again. <button class="link" data-goto="profile">Open the profile</button></li>
+            <li><b>Paste your resume.</b> That turns on the match score and the requirement gap list on job postings. <button class="link" data-goto="resume">Open resume</button></li>
+          </ol>
+          <p class="lede small">After that: <kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd> on any posting saves it, and logins get captured as you sign up.</p>
+          <button class="btn ghost" data-goto="jobs">Skip for now</button>
+        </section>
+
+        <!-- ---------------------------------------------------------- jobs -->
+        <section id="p-jobs" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="h2">Applications</h2>
+              <p class="sub" id="jobsSummary"></p>
+            </div>
+            <div class="head-actions">
+              <button id="jobsAdd" class="btn primary small">Add a job</button>
+              <button id="jobsCsv" class="btn ghost small">Export CSV</button>
+            </div>
+          </div>
+
+          <div id="followBox" class="callout" hidden>
+            <div class="callout-body">
+              <strong id="followTitle"></strong>
+              <span id="followText" class="sub"></span>
+            </div>
+            <div class="callout-actions">
+              <button id="followOpen" class="btn primary small">Open the oldest</button>
+              <button id="followSnooze" class="btn ghost small">Snooze a week</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div class="chips" id="jobsFilters"></div>
+            <input id="jobsSearch" type="search" class="field grow" placeholder="Search company, role, notes" />
+            <select id="jobsSort" class="field">
+              <option value="updated">Recently updated</option>
+              <option value="applied">Date applied</option>
+              <option value="company">Company</option>
+              <option value="match">Match score</option>
+              <option value="deadline">Deadline</option>
+            </select>
+          </div>
+
+          <div id="jobsList" class="rows"></div>
+          <p id="jobsEmpty" class="empty" hidden></p>
+        </section>
+
+        <!-- -------------------------------------------------------- logins -->
+        <section id="p-logins" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="h2">Logins</h2>
+              <p class="sub">Keyed to the exact address, so one Workday tenant never hands you another company's password.</p>
+            </div>
+            <div class="head-actions">
+              <button id="loginsAdd" class="btn primary small">Add a login</button>
+            </div>
+          </div>
+          <div id="reuseWarn" class="callout warn" hidden></div>
+          <div class="toolbar">
+            <input id="loginsSearch" type="search" class="field grow" placeholder="Search company, address, email" />
+          </div>
+          <div id="loginsList" class="rows"></div>
+          <p id="loginsEmpty" class="empty" hidden>No logins saved yet. Sign up somewhere and JobVault will offer to keep it.</p>
+        </section>
+
+        <!-- ------------------------------------------------------- profile -->
+        <section id="p-profile" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="h2">Application profile</h2>
+              <p class="sub">Answer once. This is what <kbd>Alt</kbd><kbd>Shift</kbd><kbd>F</kbd> pours into every portal.</p>
+            </div>
+            <div class="meter-wrap">
+              <div class="meter"><i id="profileMeter"></i></div>
+              <span id="profileMeterText" class="mono small muted"></span>
+            </div>
+          </div>
+          <div class="emails-box">
+            <label class="lbl">Emails you apply with</label>
+            <div id="emailList" class="email-list"></div>
+            <div class="inline">
+              <input id="emailAdd" type="email" class="field grow" placeholder="another@example.com" />
+              <button id="emailAddBtn" class="btn ghost small">Add</button>
+            </div>
+          </div>
+          <div id="profileGroups"></div>
+          <div class="repeater" id="workHistoryBox"></div>
+          <div class="repeater" id="educationBox"></div>
+          <p id="profileSaved" class="saved-note" hidden>Saved</p>
+        </section>
+
+        <!-- -------------------------------------------------------- resume -->
+        <section id="p-resume" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="h2">Resume</h2>
+              <p class="sub">Plain text is all the matcher needs. For a PDF or Word file, open it and paste the text in.</p>
+            </div>
+            <div class="head-actions">
+              <label class="btn ghost small file">Load a .txt or .md<input id="resumeFile" type="file" accept=".txt,.md,.markdown,text/plain" hidden /></label>
+              <button id="resumeSave" class="btn primary small">Save resume</button>
+            </div>
+          </div>
+          <textarea id="resumeText" class="area tall" placeholder="Paste your resume here"></textarea>
+          <p id="resumeMeta" class="sub"></p>
+
+          <h3 class="h3">Check against a posting</h3>
+          <div class="inline">
+            <button id="scanTab" class="btn ghost small">Read the job in my active tab</button>
+            <button id="matchPaste" class="btn ghost small">Match the text below</button>
+          </div>
+          <textarea id="jdText" class="area" placeholder="Or paste a job description here"></textarea>
+          <div id="matchResult" hidden></div>
+        </section>
+
+        <!-- ------------------------------------------------------- answers -->
+        <section id="p-answers" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 class="h2">Saved answers</h2>
+              <p class="sub">The long-box questions that come back every time: why this company, biggest strength, salary expectations. Write them once, copy them in.</p>
+            </div>
+            <div class="head-actions">
+              <button id="answerAdd" class="btn primary small">New answer</button>
+            </div>
+          </div>
+          <div id="answersList" class="rows"></div>
+          <p id="answersEmpty" class="empty" hidden>Nothing saved yet. Start with "Why do you want to work here?" and keep a version you can adapt.</p>
+        </section>
+
+        <!-- ------------------------------------------------------ settings -->
+        <section id="p-settings" class="panel" hidden>
+          <h2 class="h2">Settings</h2>
+
+          <div class="card">
+            <h3 class="h3">Updates</h3>
+            <p class="sub">A browser cannot let an extension rewrite its own files, so an update is two steps: get the new commit onto disk, then reload. JobVault handles the noticing and the reloading.</p>
+            <div id="updateStatus" class="update-status"></div>
+            <div class="inline wrap">
+              <button id="updCheck" class="btn ghost small">Check now</button>
+              <button id="updNative" class="btn primary small" hidden>Update now</button>
+              <button id="updReload" class="btn ghost small">Reload the extension</button>
+              <button id="updOpen" class="btn ghost small" hidden>View on GitHub</button>
+            </div>
+            <div id="updateCmd" class="cmd-box" hidden>
+              <span class="lbl">Run this, and JobVault reloads itself within a minute</span>
+              <div class="cmd"><code id="updateCmdText"></code><button id="updateCmdCopy" class="mini">Copy</button></div>
+            </div>
+            <div id="updateCommits" class="commits" hidden></div>
+            <div class="grid2">
+              <label class="fld"><span class="lbl">Repository</span><input id="updRepo" class="field mono" placeholder="owner/name" /></label>
+              <label class="fld"><span class="lbl">Branch</span><input id="updBranch" class="field mono" placeholder="main" /></label>
+            </div>
+            <label class="fld"><span class="lbl">GitHub token <span class="opt">only needed for a private repo, stored encrypted in the vault</span></span><input id="updToken" type="password" class="field mono" placeholder="ghp_..." /></label>
+            <label class="check"><input id="updAutoCheck" type="checkbox" /><span>Check GitHub for new commits every few hours</span></label>
+            <label class="check"><input id="updAutoReload" type="checkbox" /><span>Reload automatically once a new commit lands on disk</span></label>
+            <label class="check"><input id="updNativeOn" type="checkbox" /><span>Use the updater helper so <b>Update now</b> can run the pull for me</span></label>
+            <p id="nativeHelp" class="sub" hidden></p>
+          </div>
+
+          <div class="card">
+            <h3 class="h3">Filling</h3>
+            <label class="check"><input id="setAutofill" type="checkbox" /><span>Fill a saved login as soon as I land on its sign-in page</span></label>
+            <label class="check"><input id="setSingle" type="checkbox" /><span>Only fill automatically when exactly one saved login fits</span></label>
+            <label class="check"><input id="setBadge" type="checkbox" /><span>Show the fill button inside recognised fields</span></label>
+            <label class="check"><input id="setAutoApp" type="checkbox" /><span>Fill application forms without being asked <span class="opt">off by default, it can surprise you</span></span></label>
+            <label class="check"><input id="setMatch" type="checkbox" /><span>Show the resume match when I open a posting</span></label>
+            <label class="check"><input id="setTrack" type="checkbox" /><span>Log an application when I hit a confirmation page</span></label>
+            <label class="fld narrow"><span class="lbl">Nudge me to follow up after</span>
+              <select id="setFollowDays" class="field">
+                <option value="0">never</option><option value="3">3 days</option>
+                <option value="5">5 days</option><option value="7">7 days</option>
+                <option value="10">10 days</option><option value="14">14 days</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="card">
+            <h3 class="h3">Security</h3>
+            <label class="fld narrow"><span class="lbl">Lock the vault after</span>
+              <select id="setAutolock" class="field">
+                <option value="0">never</option><option value="5">5 minutes</option>
+                <option value="15">15 minutes</option><option value="30">30 minutes</option>
+                <option value="60">1 hour</option><option value="240">4 hours</option>
+              </select>
+            </label>
+            <div id="hardenBox" class="callout warn" hidden>
+              <div class="callout-body">
+                <strong>This vault uses the older key stretching</strong>
+                <span class="sub">Re-wrapping it raises the work an attacker needs. Your saved data is untouched, and you will set your PIN again afterwards.</span>
+              </div>
+              <div class="callout-actions inline">
+                <input id="hardenPass" type="password" class="field" placeholder="Master password" />
+                <button id="hardenGo" class="btn primary small">Re-wrap</button>
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <span class="lbl">Quick unlock PIN</span>
+                <p id="pinStatus" class="sub"></p>
+                <div class="inline">
+                  <input id="pinNew" type="password" inputmode="numeric" class="field" placeholder="4 to 12 digits" />
+                  <button id="pinSave" class="btn ghost small">Set PIN</button>
+                  <button id="pinRemove" class="btn ghost small" hidden>Turn off</button>
+                </div>
+              </div>
+              <div>
+                <span class="lbl">Change master password</span>
+                <p class="sub">There is no reset. This is the only key to the vault.</p>
+                <div class="inline">
+                  <input id="cmPass" type="password" class="field" placeholder="New password" />
+                  <input id="cmPass2" type="password" class="field" placeholder="Repeat" />
+                  <button id="cmGo" class="btn ghost small">Change</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="h3">Your data</h3>
+            <p class="sub">The backup file is the encrypted vault exactly as it sits on disk. Without your master password it is noise. Keep one, because there is no recovery path.</p>
+            <div id="safetyStatus" class="upd-status"></div>
+            <div class="inline wrap">
+              <button id="exportVault" class="btn primary small">Export encrypted backup</button>
+              <label class="btn ghost small file">Import a backup<input id="importVault" type="file" accept=".json,application/json" hidden /></label>
+              <button id="exportJobsCsv" class="btn ghost small">Export applications as CSV</button>
+            </div>
+
+            <div id="pathWarn" class="callout warn" hidden>
+              <div class="callout-body">
+                <strong>Keep JobVault in the same folder</strong>
+                <span class="sub">Chrome identifies an unpacked extension by its folder path, and your vault is stored against that identity. Moving or renaming the folder makes this browser treat it as a different extension, and the vault stops appearing. It is not deleted, but the fix is to move the folder back or import a backup. Upgrade by updating the files inside this folder, never by loading a copy from somewhere else.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="panel-head">
+              <div>
+                <h3 class="h3">Automatic backups</h3>
+                <p class="sub">Kept inside this browser. One a day, plus one before any update, restore, import or password change. They survive a bad update, but not uninstalling the extension, so keep an exported file too.</p>
+              </div>
+              <div class="head-actions">
+                <button id="snapNow" class="btn ghost small">Back up now</button>
+              </div>
+            </div>
+            <div id="snapList" class="rows"></div>
+          </div>
+
+          <p id="setMsg" class="msg"></p>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- --------------------------------------------------------------- modal -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle" class="h3"></h3>
+      <div id="modalBody"></div>
+      <div class="modal-actions">
+        <button id="modalCancel" class="btn ghost small">Cancel</button>
+        <button id="modalSave" class="btn primary small">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

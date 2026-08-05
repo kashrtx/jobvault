@@ -1,12 +1,16 @@
 {
   "name": "jobvault",
-  "version": "1.1.0",
-  "description": "A private, on-device password manager and resume matcher for Workday and other job application sites.",
+  "version": "2.0.1",
+  "description": "Password manager and application tracker for job hunting, for Chrome and Brave.",
   "type": "module",
   "private": true,
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check popup.js && node --check lib/crypto.js",
-    "package": "rm -f jobvault.zip && zip -rq jobvault.zip manifest.json background.js content.js popup.html popup.css popup.js lib icons README.md LICENSE"
+    "check": "for f in background.js content.js popup.js dashboard.js lib/*.js; do node --check \"$f\" || exit 1; done && python3 -m py_compile native/jobvault_updater.py && echo ok",
+    "stamp": "./scripts/stamp.sh",
+    "update": "./scripts/update.sh",
+    "hooks": "./scripts/install-hooks.sh",
+    "package": "rm -f jobvault.zip && zip -r jobvault.zip manifest.json build.json background.js content.js popup.html popup.css popup.js dashboard.html dashboard.css dashboard.js lib icons scripts native README.md CHANGELOG.md LICENSE -x '*__pycache__*'",
+    "verify": "./scripts/verify.sh"
   },
   "keywords": [
     "browser-extension",

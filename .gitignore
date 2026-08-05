@@ -1,15 +1,11 @@
-# build artifacts
+# Written by scripts/stamp.sh from whatever commit is checked out, so it is
+# per-machine state rather than source. Keeping it untracked is what stops
+# `git pull` from hitting a conflict on it every single time.
+build.json
+
 *.zip
-dist/
-build/
-
-# dependencies (none needed, but just in case)
 node_modules/
-
-# os and editor cruft
+native/com.jobvault.updater.json
+native/jobvault_updater.bat
+__pycache__/
 .DS_Store
-Thumbs.db
-*.log
-.vscode/
-.idea/
-*.swp
