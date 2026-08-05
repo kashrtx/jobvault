@@ -46,11 +46,148 @@
     return s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0";
   }
 
+  /**
+   * Bot traps. Portals plant a field that only an automated filler would touch,
+   * then flag the application when it comes back populated.
+   *
+   * Workday's is real and live: an input named "website" labelled "Enter website.
+   * This input is for robots only, do not enter if you're human." A generic
+   * matcher looking for a portfolio URL walks straight into it, and the cost is
+   * not a cosmetic bug, it is the application being marked as machine-submitted.
+   *
+   * These are checked before anything is written, and are never filled even when
+   * the user asks for a section fill by hand.
+   */
+  const TRAP_NAMES = /honeypot|honey[\s_-]?pot|beecatcher|bee[\s_-]?catcher|bot[\s_-]?catcher|bot[\s_-]?field|spam[\s_-]?trap|leave[\s_-]?blank|do[\s_-]?not[\s_-]?fill/i;
+  const TRAP_TEXT = /robots? only|for robots|do not enter if you|if you'?re human|are human|leave (this )?(field )?(blank|empty)|do not fill/i;
+
+  function isTrap(el) {
+    if (!el) return false;
+    const name = `${el.name || ""} ${el.id || ""} ${el.getAttribute("data-automation-id") || ""}`;
+    if (TRAP_NAMES.test(name)) return true;
+    if (TRAP_TEXT.test(labelText(el))) return true;
+    if (el.getAttribute("aria-hidden") === "true") return true;
+    if (el.closest("[aria-hidden='true']")) return true;
+    if (el.tabIndex === -1 && !el.getAttribute("aria-label")) return true;
+    // Positioned off screen, which passes a plain visibility check.
+    const r = el.getBoundingClientRect();
+    if (r.right < 0 || r.bottom < 0) return true;
+    const s = getComputedStyle(el);
+    if (s.clipPath && s.clipPath !== "none" && /inset\(\s*(100%|50%)/.test(s.clipPath)) return true;
+    if (parseFloat(s.opacity || "1") < 0.05) return true;
+    if (s.position === "absolute" && (parseFloat(s.left) < -500 || parseFloat(s.top) < -500)) return true;
+    return false;
+  }
+
   /** Small or hidden frames must not draw a card nobody can see. */
   function canRenderUI() {
     if (!document.body) return false;
     if (IS_TOP) return true;
     return window.innerWidth >= 340 && window.innerHeight >= 220;
+  }
+
+  // --------------------------------------------------------- what page is this
+
+  /**
+   * Workday's apply flow is a five step wizard, and it tells you where you are if
+   * you read the progress bar rather than guess from body text. The step whose
+   * container carries `progressBarActiveStep` holds a label with the step name,
+   * and the whole flow sits inside `applyFlowPage`.
+   *
+   * This matters because the previous build decided "is this a job posting?" by
+   * counting words like "requirements" in the page text, which the apply flow
+   * trips easily. It scored a resume against the page while the user was halfway
+   * through filling it in.
+   */
+  function workdayFlow() {
+    const page = document.querySelector('[data-automation-id="applyFlowPage"]');
+    if (!page) return null;
+    const active = document.querySelector('[data-automation-id="progressBarActiveStep"]');
+    const labels = active ? Array.from(active.querySelectorAll("label")).map((l) => clean(l.textContent)) : [];
+    // Two labels: a screen-reader position ("current step 2 of 5") and the name.
+    const position = labels.find((t) => /step\s+\d+\s+of\s+\d+/i.test(t)) || "";
+    const name = labels.find((t) => t && t !== position) || "";
+    const m = position.match(/step\s+(\d+)\s+of\s+(\d+)/i);
+    const steps = Array.from(document.querySelectorAll('[data-automation-id^="progressBar"][data-automation-id$="Step"]'))
+      .map((n) => {
+        const ls = Array.from(n.querySelectorAll("label")).map((l) => clean(l.textContent));
+        const pos = ls.find((t) => /step\s+\d+\s+of\s+\d+/i.test(t)) || "";
+        return {
+          name: ls.find((t) => t && t !== pos) || "",
+          state: /CompletedStep$/.test(n.dataset.automationId) ? "done"
+            : /ActiveStep$/.test(n.dataset.automationId) ? "current" : "todo",
+        };
+      })
+      .filter((s) => s.name);
+    return {
+      step: name,
+      index: m ? Number(m[1]) : 0,
+      total: m ? Number(m[2]) : steps.length,
+      steps,
+      title: clean(document.querySelector('[data-automation-id="jobTitleHeading"]')?.textContent || ""),
+      account: clean(document.querySelector("#accountSettingsButton")?.textContent || ""),
+    };
+  }
+
+  /**
+   * The repeating panels on a Workday step are `role="group"` elements labelled by
+   * a heading whose id ends in `-section`. Reading them gives the real section
+   * list for this page instead of a hardcoded guess, which is what lets the card
+   * offer a button per section and lets you pick one by hand when the automatic
+   * choice is wrong.
+   */
+  function pageSections() {
+    const out = [];
+    for (const group of document.querySelectorAll('[role="group"][aria-labelledby]')) {
+      const head = document.getElementById(group.getAttribute("aria-labelledby"));
+      if (!head) continue;
+      const id = head.id || "";
+      // Skip the inner per-entry panels ("Websites 1"); keep the outer sections.
+      if (!/-section$/.test(id)) continue;
+      const name = clean(head.textContent);
+      if (!name) continue;
+      const fields = group.querySelectorAll("input:not([type=hidden]), select, textarea");
+      const filled = Array.from(fields).filter((f) => f.value && clean(f.value)).length;
+      out.push({
+        id,
+        name,
+        node: group,
+        fieldCount: fields.length,
+        filledCount: filled,
+        addButton: group.querySelector('[data-automation-id="add-button"]'),
+        hasUpload: Boolean(group.querySelector('input[type="file"], [data-automation-id="file-upload-input-ref"]')),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * One answer to "what am I looking at", used to decide what the card offers.
+   * Ordered most specific first: being inside an apply flow beats every text cue,
+   * because a wizard step can easily read like a posting.
+   */
+  function pageKind() {
+    if (document.querySelector('[data-automation-id="CandidateHomePage"], [data-mfe-id="candidateHome"]')) {
+      return { kind: "candidateHome", ats: "Workday", flow: null };
+    }
+    const flow = workdayFlow();
+    if (flow) return { kind: "apply", ats: "Workday", flow };
+    if (document.querySelector('[data-automation-id="applyFlowPage"], [data-automation-id^="applyFlow"]')) {
+      return { kind: "apply", ats: "Workday", flow: null };
+    }
+    // Generic apply-flow signals across other systems.
+    if (
+      /\/(apply|application|apply-now|applications)(\/|$|\?)/i.test(location.pathname) ||
+      document.querySelector('form[action*="apply" i], [class*="application-form" i], [data-ui="application_form"]')
+    ) {
+      if (!isAuthPage()) return { kind: "apply", ats: "", flow: null };
+    }
+    if (isAuthPage()) return { kind: isSignupPage() ? "signup" : "login", ats: "", flow: null };
+    if (looksLikeJobPosting()) return { kind: "posting", ats: "", flow: null };
+    if (document.querySelector('[data-automation-id="jobResults"], [class*="job-list" i], [class*="search-results" i]')) {
+      return { kind: "search", ats: "", flow: null };
+    }
+    return { kind: "other", ats: "", flow: null };
   }
 
   // ------------------------------------------------------- label extraction
@@ -79,7 +216,20 @@
     const lb = el.getAttribute("aria-labelledby");
     if (lb) for (const id of lb.split(/\s+/)) { const n = document.getElementById(id); if (n) push(n.innerText); }
 
-    // Walk up looking for the question text that sits above the control.
+    /**
+     * An explicit label is the answer. Stop here.
+     *
+     * The walk below exists for controls with no label at all, and blending it
+     * into a good label actively corrupts the result. On Workday's My
+     * Information step the Phone Extension field sits just after the Email
+     * Address section, whose address is rendered as read-only text rather than an
+     * input. The walk therefore harvested it, the label became
+     * "Phone Extension - Email Address someone@example.com", the email rule
+     * matched, and the applicant's email was typed into the phone extension box.
+     */
+    if (bits.length) return clean(bits.join(" \u00b7 ")).slice(0, 300);
+
+    // No label anywhere: walk up looking for the question text above the control.
     let node = el;
     for (let depth = 0; depth < 5 && node; depth++) {
       node = node.parentElement;
@@ -89,7 +239,13 @@
       let sib = node.previousElementSibling;
       let hops = 0;
       while (sib && hops++ < 3) {
-        if (!sib.querySelector("input, select, textarea") && sib.innerText) { push(sib.innerText); break; }
+        // Text containing an address or a long value is somebody's data, not a
+        // label for this control.
+        const sibText = clean(sib.innerText || "");
+        if (!sib.querySelector("input, select, textarea") && sibText && !/@|\d{4,}/.test(sibText)) {
+          push(sibText);
+          break;
+        }
         sib = sib.previousElementSibling;
       }
       if (bits.join(" ").length > 60) break;
@@ -154,7 +310,7 @@
     ["disabilityStatus", /disabilit|disabled/, null, 10],
   ];
 
-  const SKIP = /search|filter|\bquery\b|coupon|promo|captcha|\botp\b|verification[\s_-]*code|one[\s_-]*time|two[\s_-]*factor|\b2fa\b|csrf|newsletter|subscribe|comment[\s_-]*body/;
+  const SKIP = /datesection|search|filter|\bquery\b|coupon|promo|captcha|\botp\b|verification[\s_-]*code|one[\s_-]*time|two[\s_-]*factor|\b2fa\b|csrf|newsletter|subscribe|comment[\s_-]*body/;
 
   // Selector packs. These do not replace the generic matcher, they just win when
   // they hit, because a portal's own automation ids are never ambiguous.
@@ -164,6 +320,20 @@
       name: "Workday",
       map: {
         '[data-automation-id="email"]': "email",
+        // Exact ids from the live Workday apply flow. Note what is deliberately
+        // absent: #phoneNumber--extension is never mapped, because an extension
+        // is not something a profile should ever be poured into.
+        "#name--legalName--firstName": "firstName",
+        "#name--legalName--lastName": "lastName",
+        "#name--legalName--middleName": "middleName",
+        "#address--addressLine1": "addressLine1",
+        "#address--addressLine2": "addressLine2",
+        "#address--city": "city",
+        "#address--postalCode": "postalCode",
+        "#address--countryRegion": "state",
+        "#country--country": "country",
+        "#phoneNumber--phoneNumber": "phone",
+        "#phoneNumber--countryPhoneCode": "phoneCountryCode",
         '[data-automation-id="password"]': "password",
         '[data-automation-id="verifyPassword"]': "confirmPassword",
         '[data-automation-id="legalNameSection_firstName"]': "firstName",
@@ -331,9 +501,11 @@
    * "Confirm email" both grab `email` and the confirm box gets the wrong thing.
    */
   function collectFields(opts = {}) {
-    const controls = Array.from(document.querySelectorAll("input, select, textarea")).filter(isVisible);
+    const root = opts.scope && opts.scope.isConnected ? opts.scope : document;
+    const controls = Array.from(root.querySelectorAll("input, select, textarea")).filter(isVisible);
     const byKey = new Map();
     for (const el of controls) {
+      if (isTrap(el)) continue;
       const hit = classify(el, opts);
       if (!hit) continue;
       const prev = byKey.get(hit.key);
@@ -457,8 +629,29 @@
     return true;
   }
 
+  /**
+   * Last line of defence before a write.
+   *
+   * Matching is heuristic, so a wrong guess will happen eventually. This makes
+   * the failure mode "field left empty" rather than "email address submitted as
+   * a phone extension", which is what actually reached a live application.
+   */
+  function fieldAccepts(el, value) {
+    const v = String(value || "");
+    if (!v) return false;
+    const hay = haystack(el);
+    const hasAt = v.includes("@");
+    if (hasAt && /phone|\bext\b|extension|postal|\bzip\b|city|country|state|province|salary/.test(hay)) return false;
+    if (/e[\s_-]?mail/.test(hay) && !hasAt) return false;
+    if (/postal|\bzip\b/.test(hay) && v.length > 12) return false;
+    if (/\bext\b|extension/.test(hay) && !/^[\d\s()+-]{1,8}$/.test(v)) return false;
+    if (el.maxLength > 0 && v.length > el.maxLength) return false;
+    return true;
+  }
+
   /** Fill one control, choosing the right technique for the control type. */
   async function applyValue(el, value) {
+    if (!fieldAccepts(el, value)) return false;
     if (!value) return false;
     if (el.tagName === "SELECT") return setSelect(el, value);
     if (el.type === "radio" || el.type === "checkbox") {
@@ -556,7 +749,7 @@
     closeCard();
     cardHost = document.createElement("div");
     cardHost.style.cssText =
-      "all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;";
+      `all:initial;position:fixed;right:16px;bottom:${cardOffset()};z-index:2147483647;`;
     const shadow = cardHost.attachShadow({ mode: "closed" });
     const wrap = document.createElement("div");
     wrap.innerHTML = `<style>${CARD_CSS}</style>
@@ -576,6 +769,264 @@
     (document.body || document.documentElement).appendChild(cardHost);
     shadow.getElementById("x").onclick = closeCard;
     return shadow.getElementById("body");
+  }
+
+  // ------------------------------------------------------------------- dock
+
+  /**
+   * A small permanent marker in the corner of supported pages.
+   *
+   * The complaint that started this rebuild was silence: the extension either
+   * worked or gave no sign it existed, so a failure was indistinguishable from
+   * not being installed. The dock is the fix. It is always there on a page
+   * JobVault understands, it says what it can see, and one click opens the
+   * controls.
+   *
+   * Deliberately not a repeated pop-up. Something that interrupts on a timer
+   * would be the same clunkiness in a louder costume; this stays out of the way
+   * until asked, while never leaving you guessing whether it is watching.
+   */
+  const DOCK_CSS = `
+    :host { all: initial; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .dock { display: flex; align-items: center; gap: 8px; background: #12181f; color: #e8edf3;
+      border: 1px solid #2c3743; border-radius: 999px; padding: 7px 12px 7px 10px; cursor: pointer;
+      box-shadow: 0 8px 22px rgba(0,0,0,.45); font-size: 12px; max-width: 300px;
+      transition: border-color .15s, transform .15s; }
+    .dock:hover { border-color: #3b4856; transform: translateY(-1px) }
+    .dock:focus-visible { outline: 2px solid #d9a441; outline-offset: 2px }
+    .mark { width: 16px; height: 16px; flex: 0 0 auto }
+    .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+    .txt b { color: #e8edf3; font-weight: 600 }
+    .txt span { color: #93a1b0 }
+    /* A quiet pulse while it is actively watching for fields to appear. */
+    .led { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: #6a7889 }
+    .led.watch { background: #4fb6c4; animation: bl 2.4s ease-in-out infinite }
+    .led.ready { background: #d9a441 }
+    .led.done { background: #5cbf8a }
+    .led.lock { background: #cf7259 }
+    @keyframes bl { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+    @media (prefers-reduced-motion: reduce) { .led.watch { animation: none } }
+    .hide { background: none; border: 0; color: #6a7889; cursor: pointer; font-size: 15px;
+      line-height: 1; padding: 0 0 0 2px; flex: 0 0 auto }
+    .hide:hover { color: #e8edf3 }
+  `;
+
+  let dockHost = null;
+  let dockHidden = false;
+  let dockState = null;
+
+  function removeDock() {
+    if (dockHost) { dockHost.remove(); dockHost = null; }
+  }
+
+  function setDock({ led = "watch", title = "JobVault", sub = "" } = {}) {
+    if (dockHidden || !IS_TOP || !canRenderUI()) return;
+    if (ctx && ctx.settings && ctx.settings.showDock === false) return removeDock();
+    const key = led + title + sub;
+    if (dockHost && dockState === key) return;
+    dockState = key;
+
+    if (!dockHost) {
+      dockHost = document.createElement("div");
+      dockHost.style.cssText = "all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483646;";
+      const sh = dockHost.attachShadow({ mode: "closed" });
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<style>${DOCK_CSS}</style>
+        <div class="dock" id="d" role="button" tabindex="0" aria-label="JobVault">
+          <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#d9a441" stroke-width="1.9"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="4"/><path d="M11.4 11.4 18 18"/><path d="M15.6 14.6l1.9 1.9"/><path d="M18.2 12.2l1.9 1.9"/>
+          </svg>
+          <span class="led" id="led"></span>
+          <span class="txt" id="txt"></span>
+          <button class="hide" id="h" aria-label="Hide until this tab reloads">&times;</button>
+        </div>`;
+      sh.appendChild(wrap);
+      (document.body || document.documentElement).appendChild(dockHost);
+      const d = sh.getElementById("d");
+      d.onclick = (e) => { if (e.target.id !== "h") openHelpCard(); };
+      d.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openHelpCard(); } };
+      sh.getElementById("h").onclick = (e) => { e.stopPropagation(); dockHidden = true; removeDock(); };
+      dockHost.__sh = sh;
+    }
+    const sh = dockHost.__sh;
+    sh.getElementById("led").className = "led " + led;
+    sh.getElementById("txt").innerHTML = `<b>${esc(title)}</b>${sub ? ` <span>\u00b7 ${esc(sub)}</span>` : ""}`;
+  }
+
+  /** Keep the card clear of the dock so both are readable at once. */
+  function cardOffset() {
+    return dockHost ? "58px" : "16px";
+  }
+
+  /**
+   * Reads the applications already listed on Workday's Candidate Home.
+   *
+   * These are applications the user started before JobVault existed, or on
+   * another machine. Retyping them into the tracker by hand is exactly the
+   * busywork this is supposed to remove, so they are imported instead. Status
+   * comes from the portal rather than being guessed: a submitted date means
+   * applied, "Not Submitted" means it is still a draft.
+   */
+  function scrapeApplications() {
+    const rows = Array.from(document.querySelectorAll('[data-automation-id="taskListRow"]'));
+    const out = [];
+    for (const row of rows) {
+      const link = row.querySelector('[data-automation-id="applicationTitle"] a');
+      const title = clean(link?.textContent || row.querySelector("th")?.textContent || "");
+      if (!title) continue;
+      const cells = Array.from(row.querySelectorAll("td")).map((c) => clean(c.textContent));
+      const statusBox = row.querySelector('[data-automation-id="applicationStatus"]');
+      const statusText = clean(statusBox?.textContent || "");
+      const reqId = cells.find((c) => /^[A-Z]{2,4}\d{3,}$/.test(c)) || "";
+      const submitted = cells.find((c) => /\b(19|20)\d{2}\b/.test(c) && !/^created on/i.test(c) && c !== statusText) || "";
+      const applied = submitted ? Date.parse(submitted) : 0;
+
+      let status = "saved";
+      if (/withdraw/i.test(statusText)) status = "withdrawn";
+      else if (/not submitted|in progress|draft/i.test(statusText) && !applied) status = "saved";
+      else if (applied) status = "applied";
+
+      out.push({
+        url: link?.href || location.href,
+        company: prettyHost(),
+        title,
+        status,
+        appliedAt: applied || 0,
+        source: "Workday Candidate Home",
+        notes: [reqId && `Requisition ${reqId}`, statusText && `Portal status: ${statusText}`]
+          .filter(Boolean).join("\n"),
+      });
+    }
+    return out;
+  }
+
+  function prettyHost() {
+    const labels = location.hostname.split(".");
+    const first = labels[0] || location.hostname;
+    return first.replace(/^www$/, labels[1] || first).replace(/^./, (c) => c.toUpperCase());
+  }
+
+  // --------------------------------------------------------- manual controls
+
+  const SECTION_HINTS = [
+    { re: /work|employment|experience/i, key: "work", label: "Work experience" },
+    { re: /education|school|academic/i, key: "education", label: "Education" },
+    { re: /website|link|url|portfolio|social/i, key: "links", label: "Websites and links" },
+    { re: /certification|licen[cs]e/i, key: "certs", label: "Certifications" },
+    { re: /language/i, key: "languages", label: "Languages" },
+    { re: /resume|cv|attach|upload/i, key: "resume", label: "Resume" },
+    { re: /skill/i, key: "skills", label: "Skills" },
+    { re: /address|contact|personal|name|information/i, key: "identity", label: "Contact details" },
+    { re: /disclos|veteran|disabilit|gender|ethnic|race/i, key: "eeo", label: "Voluntary disclosures" },
+    { re: /question/i, key: "questions", label: "Application questions" },
+  ];
+
+  const sectionKey = (name) => (SECTION_HINTS.find((h) => h.re.test(name)) || {}).key || "";
+
+  /**
+   * The card you get by clicking the dock. Its job is to never be a dead end: if
+   * the automatic guess about this page is wrong, everything is here to do by
+   * hand, including filling one named section at a time.
+   */
+  async function openHelpCard() {
+    const pk = pageKind();
+    const body = openCard();
+    if (!body) return;
+
+    if (ctx?.locked) {
+      body.appendChild(el("div", "msg", "JobVault is locked. Unlock it from the toolbar and this page fills itself."));
+      button(body, "Close", "ghost", closeCard);
+      return;
+    }
+
+    const flow = pk.flow;
+    if (flow?.step) {
+      body.appendChild(el("div", "msg",
+        `<b>${esc(flow.step)}</b>${flow.total ? ` \u00b7 step ${flow.index} of ${flow.total}` : ""}` +
+        `${flow.title ? `<br><span style="color:#6a7889">${esc(flow.title)}</span>` : ""}`));
+    } else {
+      const what = { apply: "an application form", posting: "a job posting", login: "a sign-in page", signup: "a sign-up page", search: "a list of jobs" }[pk.kind] || "this page";
+      body.appendChild(el("div", "msg", `Looks like <b>${esc(what)}</b>. If that is wrong, use the buttons below anyway.`));
+    }
+    if (ctx?.host) tenantStrip(body, ctx.host, ctx.tenant);
+
+    // Per-section fill. This is the answer to "if it cannot tell what section
+    // you are on, click a button and it helps".
+    const sections = pageSections();
+    if (sections.length) {
+      body.appendChild(el("div", "h4", "Fill one section"));
+      const list = el("ul", "receipt");
+      for (const s of sections) {
+        const li = el("li");
+        const key = sectionKey(s.name);
+        const can = s.fieldCount > 0 && !s.hasUpload;
+        li.innerHTML = `<s>${s.filledCount ? "\u2713" : "\u00b7"}</s><span style="flex:1">${esc(s.name)}` +
+          `${s.hasUpload ? " <i style=\"color:#6a7889;font-style:normal\">(upload, yours to do)</i>"
+            : s.fieldCount ? ` <i style="color:#6a7889;font-style:normal">${s.filledCount}/${s.fieldCount}</i>`
+            : " <i style=\"color:#6a7889;font-style:normal\">(press Add first)</i>"}</span>`;
+        if (can || s.addButton) {
+          const b = document.createElement("button");
+          b.className = "act ghost";
+          b.type = "button";
+          b.style.cssText = "width:auto;margin:0;padding:3px 9px;font-size:11px";
+          b.textContent = s.fieldCount ? "Fill" : "Add";
+          b.onclick = async () => {
+            if (!s.fieldCount && s.addButton) {
+              s.addButton.click();
+              await sleep(700);
+              closeCard();
+              return openHelpCard();
+            }
+            closeCard();
+            await doFillApplication({ scope: s.node, sectionName: s.name, sectionKey: key });
+          };
+          li.appendChild(b);
+        }
+        list.appendChild(li);
+      }
+      body.appendChild(list);
+    }
+
+    if (pk.kind === "candidateHome") {
+      const found = scrapeApplications();
+      body.appendChild(el("div", "h4", "Applications on this page"));
+      if (!found.length) {
+        body.appendChild(el("div", "msg", "No application rows found here."));
+      } else {
+        const list = el("ul", "receipt");
+        for (const a of found.slice(0, 8)) {
+          list.appendChild(el("li", null,
+            `<s>\u00b7</s><span>${esc(a.title)} <i style="color:#6a7889;font-style:normal">${esc(a.status)}</i></span>`));
+        }
+        body.appendChild(list);
+        button(body, `Add ${found.length} to my tracker`, "primary", async () => {
+          let added = 0, dupes = 0;
+          for (const job of found) {
+            const res = await send({ type: "saveJob", job });
+            if (res?.ok) res.duplicate ? dupes++ : added++;
+          }
+          closeCard();
+          toast(`${added} added to your tracker${dupes ? `, ${dupes} already tracked` : ""}.`);
+        });
+      }
+    }
+
+    body.appendChild(el("div", "h4", "Or do the whole page"));
+    const row = el("div", "row");
+    button(row, "Fill this step", "primary", async () => { closeCard(); await doFillApplication({ explicit: true }); });
+    if (ctx?.matches?.length) button(row, "Fill login", "ghost", () => doFillLogin({ explicit: true }));
+    body.appendChild(row);
+
+    const row2 = el("div", "row");
+    button(row2, "Save this job", "ghost", async () => {
+      const res = await send({ type: "saveJob", job: currentJob() });
+      closeCard();
+      toast(res?.ok ? "Saved to your tracker." : "Could not save that one.");
+    });
+    button(row2, "Tracker", "ghost", () => send({ type: "openDashboard", hash: "#jobs" }));
+    body.appendChild(row2);
   }
 
   const el = (tag, cls, html) => {
@@ -955,7 +1406,7 @@
 
   // ------------------------------------------------------ application flow
 
-  async function doFillApplication({ explicit = false } = {}) {
+  async function doFillApplication({ explicit = false, scope = null, sectionName = "" } = {}) {
     if (!ctx || ctx.locked) {
       if (explicit) toast("JobVault is locked. Open it from the toolbar, then try again.");
       return;
@@ -967,9 +1418,15 @@
       return toast("Your application profile is empty. Open JobVault \u2192 Profile to fill it in once.");
     }
 
-    const fields = collectFields({ authContext: false });
+    // A scope means the user picked one section by hand, which also implies
+    // consent to overwrite what is already in it.
+    const scoped = Boolean(scope);
+    const fields = collectFields({ authContext: false, scope });
     const results = [];
     const skipped = [];
+    if (scoped && !fields.size) {
+      return toast(`Nothing fillable in <b>${esc(sectionName)}</b> yet. Press Add in that section first.`);
+    }
 
     for (const [key, found] of fields) {
       if (["password", "confirmPassword", "username"].includes(key)) continue;
@@ -978,7 +1435,7 @@
       if (!want && key === "fullName") want = values.fullName;
       if (!want && key === "email") want = values.email;
       if (!want) continue;
-      if (found.el.value && found.el.value !== want && !explicit) { skipped.push(key); continue; }
+      if (found.el.value && found.el.value !== want && !explicit && !scoped) { skipped.push(key); continue; }
       const ok = await applyValue(found.el, want);
       results.push({ label: humanKey(key), ok });
       if (!ok) skipped.push(key);
@@ -1062,7 +1519,9 @@
     if (!ctx || ctx.locked) return;
     if (!ctx.settings?.matchOnOpen || !ctx.hasResume) return;
     if (!IS_TOP || seenMatch.has(location.href)) return;
-    if (!looksLikeJobPosting()) return;
+    // Only on an actual posting. Scoring a resume against step 2 of an apply
+    // wizard is noise at exactly the moment the user wants help filling it.
+    if (pageKind().kind !== "posting") return;
     seenMatch.add(location.href);
     const text = extractJobText();
     if (text.length < 400) return;
@@ -1152,6 +1611,11 @@
 
       if (isAuthPage()) {
         watchSubmit();
+        setDock({
+          led: ctx.locked ? "lock" : ctx.matches?.length ? "ready" : "watch",
+          title: ctx.locked ? "JobVault" : ctx.matches?.length ? "Saved login found" : "Sign-in page",
+          sub: ctx.locked ? "locked" : ctx.matches?.length ? (ctx.matches[0].company || "") : "nothing saved yet",
+        });
         if (ctx.locked) {
           if (IS_TOP && !announcedSignup) {
             announcedSignup = true;
@@ -1173,8 +1637,39 @@
         return;
       }
 
-      if (ctx.locked) return;
-      if (ctx.settings.autofillApplication && applicationFieldCount() >= 5 && !scan.filledApp) {
+      if (ctx.locked) {
+        setDock({ led: "lock", title: "JobVault", sub: "locked" });
+        return;
+      }
+
+      // Everything below is also what the dock reports, so the badge and the
+      // behaviour can never disagree about what was detected.
+      const pk = pageKind();
+      const appFields = applicationFieldCount();
+      if (pk.kind === "apply") {
+        const flow = pk.flow;
+        const sections = pageSections();
+        const sub = flow?.step
+          ? `${flow.step}${flow.total ? ` \u00b7 ${flow.index}/${flow.total}` : ""}`
+          : appFields
+          ? `${appFields} field${appFields === 1 ? "" : "s"} ready`
+          : sections.length
+          ? `${sections.length} sections`
+          : "application form";
+        setDock({ led: appFields ? "ready" : "watch", title: scan.filledApp ? "Filled" : "Ready to fill", sub });
+      } else if (pk.kind === "posting") {
+        setDock({ led: "ready", title: "Job posting", sub: "save it or check the match" });
+      } else if (pk.kind === "candidateHome") {
+        const n = document.querySelectorAll('[data-automation-id="taskListRow"]').length;
+        setDock({ led: n ? "ready" : "watch", title: "Candidate home",
+                  sub: n ? `${n} application${n === 1 ? "" : "s"} to import` : "no applications listed" });
+      } else if (pk.kind === "search") {
+        setDock({ led: "watch", title: "JobVault", sub: "watching for a posting" });
+      } else {
+        setDock({ led: "watch", title: "JobVault", sub: appFields ? `${appFields} fields ready` : "watching" });
+      }
+
+      if (ctx.settings.autofillApplication && appFields >= 5 && !scan.filledApp) {
         scan.filledApp = true;
         await doFillApplication();
         return;

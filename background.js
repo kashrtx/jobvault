@@ -6,6 +6,7 @@ import {
 import { computeMatch } from "./lib/match.js";
 import { normalizeProfile, emptyProfile, fillValues, completeness } from "./lib/profile.js";
 import { checkForUpdate, readBuild, DEFAULT_REPO, DEFAULT_BRANCH } from "./lib/update.js";
+import { ATS, atsName, originPattern, hostOf as siteHostOf } from "./lib/sites.js";
 
 const K_META = "jv_meta";
 const K_VAULT = "jv_vault";
@@ -134,6 +135,8 @@ const DEFAULT_SETTINGS = {
   autofillLogins: true,
   autofillOnlyWhenSingleMatch: true,
   showFieldBadge: true,
+  showDock: true,
+  extraSites: [],
   autofillApplication: false,
   matchOnOpen: true,
   autoTrackApplications: true,
@@ -1157,6 +1160,83 @@ async function handle(msg, sender) {
     }
     case "hasNativePermission":
       return { ok: true, granted: await chrome.permissions.contains({ permissions: ["nativeMessaging"] }) };
+
+    /**
+     * Run on a page JobVault was not granted in advance.
+     *
+     * The content script is scoped to known applicant tracking systems, so a
+     * company running something bespoke gets nothing by default. `activeTab`
+     * covers exactly this: a click in the popup is the user gesture that grants
+     * access to that one tab, for this one visit, and nothing else.
+     */
+    case "runHere": {
+      const tabId = msg.tabId ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+      if (!tabId) return { ok: false, error: "No page to run on." };
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          files: ["content.js"],
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: "Chrome would not allow it here: " + err.message };
+      }
+    }
+
+    /** Remember a site so it works without asking every time. */
+    case "addSite": {
+      const pattern = msg.pattern;
+      if (!/^https?:\/\/[^/]+\/\*$/.test(String(pattern || ""))) {
+        return { ok: false, error: "That is not a site pattern I can register." };
+      }
+      const granted = await chrome.permissions.request({ origins: [pattern] });
+      if (!granted) return { ok: false, error: "Permission was not granted, so nothing changed." };
+      const id = "jv-site-" + pattern.replace(/[^a-z0-9]+/gi, "-");
+      try {
+        const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [id] }).catch(() => []);
+        if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [id] });
+        await chrome.scripting.registerContentScripts([{
+          id, matches: [pattern], js: ["content.js"],
+          runAt: "document_idle", allFrames: true, persistAcrossSessions: true,
+        }]);
+      } catch (err) {
+        return { ok: false, error: "Could not register that site: " + err.message };
+      }
+      await mutate((v) => {
+        v.settings.extraSites = [...new Set([...(v.settings.extraSites || []), pattern])];
+      }).catch(() => {});
+      return { ok: true, pattern };
+    }
+
+    case "removeSite": {
+      const pattern = msg.pattern;
+      const id = "jv-site-" + String(pattern).replace(/[^a-z0-9]+/gi, "-");
+      try { await chrome.scripting.unregisterContentScripts({ ids: [id] }); } catch { /* already gone */ }
+      try { await chrome.permissions.remove({ origins: [pattern] }); } catch { /* keep going */ }
+      await mutate((v) => {
+        v.settings.extraSites = (v.settings.extraSites || []).filter((p) => p !== pattern);
+      }).catch(() => {});
+      return { ok: true };
+    }
+
+    case "listSites": {
+      const registered = await chrome.scripting.getRegisteredContentScripts().catch(() => []);
+      return {
+        ok: true,
+        extra: registered.filter((s) => s.id.startsWith("jv-site-")).flatMap((s) => s.matches),
+        builtIn: ATS.map((a) => a.name),
+      };
+    }
+
+    case "siteStatus": {
+      const url = msg.url || "";
+      const host = siteHostOf(url);
+      const known = atsName(host);
+      const pattern = originPattern(url);
+      const registered = await chrome.scripting.getRegisteredContentScripts().catch(() => []);
+      const added = registered.some((s) => s.id.startsWith("jv-site-") && (s.matches || []).includes(pattern));
+      return { ok: true, host, ats: known, supported: Boolean(known) || added, added, pattern };
+    }
 
     case "openDashboard":
       await chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html" + (msg.hash || "")) });

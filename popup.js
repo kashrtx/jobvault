@@ -190,6 +190,30 @@ async function loadPageContext() {
     return;
   }
   if (summary.unreachable) {
+    // JobVault only loads itself on known applicant tracking systems, so an
+    // unreachable tab is usually a career site running something bespoke rather
+    // than a fault. Offer to run here instead of just reporting a problem.
+    const st = await send({ type: "siteStatus", url: tab.url });
+    if (st.ok && !st.supported) {
+      body.appendChild(el("div", "panel-title", esc(st.host || "this site")));
+      body.appendChild(el("p", "panel-sub",
+        "This is not one of the job systems JobVault loads on by default, which is why it is not already watching. Run it here and it will look for a form."));
+      body.appendChild(button("btn primary wide", "Look at this page now", async () => {
+        const res = await send({ type: "runHere", tabId: tab.id });
+        if (!res.ok) return toast(res.error);
+        await new Promise((r) => setTimeout(r, 400));
+        loadPageContext();
+      }));
+      body.appendChild(button("btn ghost wide", "Always run on this site", async () => {
+        const res = await send({ type: "addSite", pattern: st.pattern });
+        if (!res.ok) return toast(res.error);
+        toast(`JobVault will run on ${st.host} from now on.`);
+        await send({ type: "runHere", tabId: tab.id });
+        await new Promise((r) => setTimeout(r, 400));
+        loadPageContext();
+      }));
+      return;
+    }
     body.appendChild(el("p", "panel-sub", "JobVault cannot see this tab yet. That happens right after the extension reloads."));
     body.appendChild(button("btn ghost wide", "Reload the tab", async () => {
       await chrome.tabs.reload(tab.id);

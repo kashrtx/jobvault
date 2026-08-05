@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobVault",
-  "version": "2.0.1",
+  "version": "2.2.0",
   "description": "Job application command centre. Fills the right login for the right Workday tenant, fills the 40-field application form, and tracks every job you save or apply to.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -17,9 +17,7 @@
   "optional_permissions": [
     "nativeMessaging"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "host_permissions": [],
   "action": {
     "default_popup": "popup.html",
     "default_title": "JobVault (Ctrl+Shift+Y)",
@@ -36,7 +34,45 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "*://*.myworkdayjobs.com/*",
+        "*://*.myworkdaysite.com/*",
+        "*://*.myworkday.com/*",
+        "*://*.wd1.myworkdayjobs.com/*",
+        "*://boards.greenhouse.io/*",
+        "*://job-boards.greenhouse.io/*",
+        "*://*.greenhouse.io/*",
+        "*://jobs.lever.co/*",
+        "*://*.lever.co/*",
+        "*://jobs.ashbyhq.com/*",
+        "*://*.ashbyhq.com/*",
+        "*://*.smartrecruiters.com/*",
+        "*://*.workable.com/*",
+        "*://*.icims.com/*",
+        "*://*.taleo.net/*",
+        "*://*.successfactors.com/*",
+        "*://*.successfactors.eu/*",
+        "*://*.sapsf.com/*",
+        "*://*.sapsf.eu/*",
+        "*://*.bamboohr.com/*",
+        "*://*.jobvite.com/*",
+        "*://*.teamtailor.com/*",
+        "*://*.breezy.hr/*",
+        "*://*.recruitee.com/*",
+        "*://*.personio.de/*",
+        "*://*.personio.com/*",
+        "*://*.pinpointhq.com/*",
+        "*://*.eightfold.ai/*",
+        "*://*.rippling.com/*",
+        "*://*.oraclecloud.com/*",
+        "*://*.dayforcehcm.com/*",
+        "*://*.ultipro.com/*",
+        "*://*.ukg.net/*",
+        "*://*.adp.com/*",
+        "*://*.paylocity.com/*",
+        "*://*.paycom.com/*",
+        "*://*.phenompeople.com/*",
+        "*://*.avature.net/*",
+        "*://*.csod.com/*"
       ],
       "js": [
         "content.js"
@@ -78,5 +114,8 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "optional_host_permissions": [
+    "*://*/*"
+  ]
 }

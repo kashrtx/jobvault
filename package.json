@@ -1,6 +1,6 @@
 {
   "name": "jobvault",
-  "version": "2.0.1",
+  "version": "2.2.0",
   "description": "Password manager and application tracker for job hunting, for Chrome and Brave.",
   "type": "module",
   "private": true,
@@ -22,5 +22,10 @@
     "manifest-v3",
     "privacy"
   ],
-  "license": "MIT"
+  "license": "Apache-2.0",
+  "author": "Kaushal Bhingaradia",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kashrtx/jobvault.git"
+  }
 }

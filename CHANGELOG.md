@@ -1,5 +1,73 @@
 # Changelog
 
+## 2.2.0
+
+Built from captured DOM of a complete Workday flow: sign-in, candidate home, job
+posting, and all five apply steps.
+
+### Fixed
+
+- **An email address was written into the phone extension field**, and reached a
+  live application's review page. `labelText` blended an explicit `label[for]`
+  with text harvested from surrounding elements. On the My Information step the
+  Phone Extension field follows the Email Address section, whose address is
+  read-only text rather than an input, so the label became "Phone Extension ·
+  Email Address someone@example.com" and the email rule matched. An explicit
+  label now ends the search, and harvested sibling text containing an "@" or a
+  long number is rejected as data rather than treated as a label.
+- **The bot trap was fillable.** Workday plants an input named `website`,
+  labelled "This input is for robots only, do not enter if you're human". A
+  generic matcher hunting for a portfolio URL walks straight into it, and a
+  populated trap marks the application as machine-submitted. Traps are now
+  detected by name, label wording, off-screen positioning, clip, opacity and
+  aria-hidden, and are never filled even during a manual section fill.
+- Workday's split date controls (three separate spinbuttons for month, day and
+  year) are skipped rather than partially filled, since half a required date is
+  worse than none.
+
+### Added
+
+- A compatibility check before every write. A value has to suit the field, so a
+  bad guess leaves a field empty instead of putting an email in a salary box.
+  Verified against the real values from the captured pages.
+- Workday's exact field ids for the My Information step, so name, address, city,
+  postal code, country, phone and country code no longer rely on heuristics.
+  `#phoneNumber--extension` is deliberately left unmapped.
+- Candidate Home import: the applications Workday already lists are read
+  straight off the page, with status taken from the portal rather than guessed,
+  and added to the tracker in one click.
+
+## 2.1.0
+
+### Changed
+
+- **Scope.** The content script matched every URL and now matches only known
+  applicant tracking systems, 39 patterns across 27 systems. Everywhere else it
+  is not injected at all. `<all_urls>` moved to an optional permission, requested
+  per site only when you choose to add one.
+- Relicensed from MIT to Apache-2.0, with a `NOTICE` file.
+
+### Fixed
+
+- **It scored your resume against the apply form.** Whether a page was a job
+  posting was decided by counting words like "requirements" in the body text,
+  which a wizard step trips easily, so the match card appeared mid-application.
+  Page kind is now determined from structure, and inside an apply flow the card
+  offers to fill rather than to score.
+
+### Added
+
+- A status marker in the corner of supported pages, always present, reporting
+  what JobVault can see: the current Workday step, how many fields are ready, or
+  which saved login matched. Click it for the controls. Can be turned off.
+- Workday step awareness read from the progress bar rather than guessed, so it
+  knows it is on "My Experience, step 2 of 5".
+- Per-section filling. Sections on the page are enumerated from their
+  `role="group"` headings, and each gets its own Fill button, so a wrong
+  automatic guess is never a dead end. Sections needing their Add button pressed
+  first say so, and uploads are marked as yours to do.
+- One-time and permanent activation for career sites outside the built-in list.
+
 ## 2.0.1
 
 Data safety and update reliability. Everything below was found by testing the

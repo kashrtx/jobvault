@@ -978,6 +978,7 @@ function renderSettings() {
   $("#setAutofill").checked = s.autofillLogins !== false;
   $("#setSingle").checked = s.autofillOnlyWhenSingleMatch !== false;
   $("#setBadge").checked = s.showFieldBadge !== false;
+  $("#setDock").checked = s.showDock !== false;
   $("#setAutoApp").checked = s.autofillApplication === true;
   $("#setMatch").checked = s.matchOnOpen !== false;
   $("#setTrack").checked = s.autoTrackApplications !== false;
@@ -1005,7 +1006,7 @@ function renderSettings() {
 }
 
 const settingBind = {
-  setAutofill: "autofillLogins", setSingle: "autofillOnlyWhenSingleMatch", setBadge: "showFieldBadge",
+  setAutofill: "autofillLogins", setSingle: "autofillOnlyWhenSingleMatch", setBadge: "showFieldBadge", setDock: "showDock",
   setAutoApp: "autofillApplication", setMatch: "matchOnOpen", setTrack: "autoTrackApplications",
 };
 for (const [id, key] of Object.entries(settingBind)) {

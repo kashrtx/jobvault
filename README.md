@@ -45,6 +45,30 @@ rewriting it at midnight.
 
 ---
 
+## Where it runs
+
+JobVault loads itself only on applicant tracking systems: Workday, Greenhouse,
+Lever, Ashby, SmartRecruiters, Workable, iCIMS, Taleo, SuccessFactors, BambooHR,
+Jobvite, Teamtailor, Breezy, Recruitee, Personio, Pinpoint, Eightfold, Rippling,
+Oracle Cloud, Dayforce, UKG, ADP, Paylocity, Paycom, Phenom, Avature and
+Cornerstone.
+
+Everywhere else it is not running at all. Not idle, not watching quietly: the
+content script is never injected, so it cannot see the page. Earlier versions
+matched every URL, which meant loading on your bank and your email for no benefit,
+and is why cards turned up in places they had no business being.
+
+Embedded forms still work. When a company puts a Greenhouse or Lever form in an
+iframe on its own careers page, the iframe's URL is the Greenhouse one, so the
+frame matches and the form gets filled while JobVault stays off the wrapper page.
+
+**Career sites running something bespoke.** Open the toolbar popup and it offers
+**Look at this page now**, which runs once on that tab only, or **Always run on
+this site**, which asks for permission for that one domain and remembers it.
+Nothing is granted in advance and you can revoke it later.
+
+---
+
 ## Install
 
 JobVault is not on the Chrome Web Store. It runs as an unpacked extension, which
@@ -313,4 +337,6 @@ native/               optional git updater host
 
 ## Licence
 
-MIT. See `LICENSE`.
+Apache License 2.0. See `LICENSE` and `NOTICE`.
+
+
